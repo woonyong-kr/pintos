@@ -201,12 +201,15 @@ vm_get_frame (void) {
 	return frame; /* 초기화된 frame을 반환 */
 }
 
-/* Growing the stack. */
+/* 스택을 늘린다 = 새 가상 페이지를 spt에 등록하고, 물리 프레임 붙이겠다 */
 static void
-vm_stack_growth (void *addr UNUSED) {
+vm_stack_growth (void *addr) {
 	/* TODO VM-13: addr을 page boundary로 내린 뒤 VM_ANON stack page를
 	 * SPT에 등록하고 즉시 vm_claim_page()한다. USER_STACK 경계와 최대 stack
 	 * 크기 제한을 함께 검사해야 한다. */
+	void *stack_addr = pg_round_down (addr);
+	vm_alloc_page (VM_ANON | VM_MARKER_0, stack_addr, true);
+	vm_claim_page (stack_addr);
 }
 
 /* Handle the fault on write_protected page */
@@ -218,21 +221,33 @@ vm_handle_wp (struct page *page UNUSED) {
 	return false;
 }
 
-/* Return true on success */
+/* page fault가 처리 가능한 fault인지 판단하고, 가능하면(true) 해결하는 함수 */
 bool
-vm_try_handle_fault (struct intr_frame *f UNUSED, void *addr UNUSED,
-                     bool user UNUSED, bool write UNUSED, bool not_present UNUSED) {
-	struct supplemental_page_table *spt UNUSED = &thread_current ()->spt;
+vm_try_handle_fault (struct intr_frame *f, void *addr,
+                     bool user, bool write, bool not_present) {
+	struct supplemental_page_table *spt = &thread_current ()->spt;
 	struct page *page = NULL;
-	/* TODO: Validate the fault */
-	/* TODO VM-12: kernel address, NULL, not_present=false인 protection fault,
-	 * write인데 page가 writable이 아닌 경우를 걸러낸다. */
-	/* TODO: Your code goes here */
-	/* TODO VM-12: addr을 pg_round_down()해서 SPT에서 page를 찾는다. 없으면
-	 * f->rsp 근처 fault인지 검사해 stack growth 후보만 vm_stack_growth()로
-	 * 만든다. 찾은 page는 vm_do_claim_page()로 frame/PTE/swap_in을 연결한다. */
+	if (is_kernel_vaddr (addr) || (addr == NULL) || (!not_present)) {
+		return false;
+	}
+	page = spt_find_page (spt, addr);
+	/* SPT에서 page를 못 찾았을 때, 이 fault 주소가 “스택이 커지면서 발생한 정상 page fault”인지 검사 */
+	if (page == NULL) {
+		void *rsp = f->rsp;
 
-	return vm_do_claim_page (page);
+		if ((uint8_t *) addr >= (uint8_t *) rsp - 8 &&
+		    (uint8_t *) addr >= (uint8_t *) USER_STACK - (1 << 20) &&
+		    (uint8_t *) addr < (uint8_t *) USER_STACK) {
+			vm_stack_growth (addr);
+			return true;
+		}
+		return false;
+	}
+	if (write && !page->writable) {
+		return false;
+	}
+
+	return vm_claim_page (addr);
 }
 
 /* Free the page.
