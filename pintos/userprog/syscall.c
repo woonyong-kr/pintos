@@ -42,6 +42,7 @@ unsigned tell (int fd);
 int filesize (int fd);
 void check_address (const void *addr);
 size_t* mmap(void *addr, size_t length, int writable, int fd, off_t offset);
+void munmap (void *addr);
 static bool user_page_present (struct thread *curr, const void *addr);
 static bool user_page_accessible (struct thread *curr, const void *addr,
                                   bool write);
@@ -158,6 +159,9 @@ syscall_handler (struct intr_frame *f UNUSED) {
 	case SYS_MMAP:
 		f->R.rax = mmap(f->R.rdi, f->R.rsi, f->R.rdx,
 		                f->R.r10, f->R.r8);
+		break;
+	case SYS_MUNMAP:
+		munmap(f->R.rdi);
 		break;
 	default:
 		break;
@@ -581,4 +585,10 @@ mmap(void *addr, size_t length, int writable, int fd, off_t offset){
 	RETURN_VALUE_IF(file == NULL, NULL);
 
 	return do_mmap(addr, length, writable, file, offset);
+}
+
+void 
+munmap (void *addr){
+	RETURN_VALUE_IF(addr == NULL, NULL);
+	return do_munmap(addr);
 }

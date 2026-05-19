@@ -59,6 +59,11 @@ static bool vm_should_grow_stack (struct intr_frame *f, void *addr, bool user);
 static bool vm_grow_stack_and_claim (void *addr);
 static bool vm_handle_write_protect_fault (void *addr, bool write);
 
+static void
+vm_destroy_page_frame (struct page *page);
+static void
+spt_entry_destroy (struct hash_elem *e, void *aux UNUSED);
+
 static uint64_t
 page_hash (const struct hash_elem *e, void *aux UNUSED) {
 	struct page *item = hash_entry (e, struct page, hash_elem);
@@ -460,4 +465,36 @@ void
 supplemental_page_table_kill (struct supplemental_page_table *spt UNUSED) {
 	/* TODO: Destroy all the supplemental_page_table hold by thread and
 	 * TODO: writeback all the modified contents to the storage. */
+	RETURN_IF (spt == NULL);
+	hash_destroy(&spt->hash_table, spt_entry_destroy);
+}
+
+static void
+spt_entry_destroy (struct hash_elem *e, void *aux UNUSED) {
+	struct page *page = hash_entry (e, struct page, hash_elem);
+	vm_destroy_page_frame (page);
+	destroy (page);
+	free (page);
+}
+
+static void
+vm_destroy_page_frame (struct page *page) {
+	RETURN_IF (page == NULL || page->frame == NULL);
+
+	struct frame *frame = page->frame;
+
+	if (frame->owner_thread != NULL && frame->owner_thread->pml4 != NULL)
+		pml4_clear_page (frame->owner_thread->pml4, page->va);
+
+	lock_acquire (&frame_lock);
+	list_remove (&frame->elem);
+	lock_release (&frame_lock);
+
+	if (frame->kva != NULL)
+		palloc_free_page (frame->kva);
+
+	frame->page = NULL;
+	frame->owner_thread = NULL;
+	page->frame = NULL;
+	free (frame);
 }
