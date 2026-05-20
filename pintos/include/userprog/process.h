@@ -15,6 +15,7 @@ void process_exit (void);
 void process_activate (struct thread *next);
 void process_exit_with_status (int status);
 
+
 /* 파일 디스크립터 헬퍼 */
 int process_add_file (struct file *f);
 struct file *process_get_file (int fd);

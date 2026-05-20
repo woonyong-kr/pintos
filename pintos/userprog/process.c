@@ -1,29 +1,27 @@
 #include "userprog/process.h"
-
 #include <debug.h>
 #include <inttypes.h>
 #include <round.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-#include "devices/timer.h"
+#include "lib/cstr.h"
+#include "userprog/gdt.h"
+#include "userprog/syscall.h"
+#include "userprog/tss.h"
 #include "filesys/directory.h"
 #include "filesys/file.h"
 #include "filesys/filesys.h"
-#include "intrinsic.h"
-#include "lib/cstr.h"
 #include "threads/flags.h"
 #include "threads/init.h"
 #include "threads/interrupt.h"
 #include "threads/malloc.h"
-#include "threads/mmu.h"
 #include "threads/palloc.h"
 #include "threads/thread.h"
+#include "threads/mmu.h"
 #include "threads/vaddr.h"
-#include "userprog/gdt.h"
-#include "userprog/syscall.h"
-#include "userprog/tss.h"
+#include "devices/timer.h"
+#include "intrinsic.h"
 #ifdef VM
 #include "vm/vm.h"
 #endif
@@ -387,10 +385,6 @@ __do_fork (void *aux) {
 
 	/* 자식 프로세스에서 fork()의 반환값은 0이다. */
 	if_.R.rax = 0;
-#ifdef VM
-	curr->user_rsp = if_.rsp;
-	curr->stack_bottom = parent->stack_bottom;
-#endif
 
 	process_init ();
 	curr->self_status->fork_success = true;
@@ -438,16 +432,12 @@ process_exec (void *f_name) {
 	_if.eflags = FLAG_IF | FLAG_MBS;
 
 	/*
-	 * TODO:
-	 * SPT 초기화
-	 * 파일 load
-	 *
+	 * 먼저 현재 문맥을 제거한다.
 	 */
 #ifdef VM
 	process_cleanup ();
 	close_running_file (curr);
 	supplemental_page_table_init (&curr->spt);
-
 #else
 	close_running_file (curr);
 	process_cleanup ();
@@ -460,6 +450,7 @@ process_exec (void *f_name) {
 	 * 바이너리 세팅
 	 */
 	success = load (file_name, &_if);
+	palloc_free_page (file_name);
 	if (!success)
 		return -1;
 
@@ -605,8 +596,7 @@ process_exit_with_status (int status) {
 	thread_exit ();
 }
 
-/* 프로세스가 보관하던 executable file을 닫아 실행 파일 write deny를 해제한다.
- */
+/* 프로세스가 보관하던 executable file을 닫아 실행 파일 write deny를 해제한다. */
 static void
 close_running_file (struct thread *curr) {
 	if (curr == NULL || curr->running_file == NULL)
@@ -1125,7 +1115,7 @@ load (const char *file_name, struct intr_frame *if_) {
 	char *fn_copy = NULL;
 	int argc = 0;
 
-	if (!setup_process_address_space (t))
+	if(!setup_process_address_space (t))
 		goto done;
 
 	fn_copy = copy_command_line (file_name);
@@ -1133,7 +1123,7 @@ load (const char *file_name, struct intr_frame *if_) {
 	if (fn_copy == NULL)
 		goto done;
 
-	if (!parse_command_line (fn_copy, argv, &argc, sizeof argv / sizeof *argv))
+	if(!parse_command_line (fn_copy, argv, &argc, sizeof argv / sizeof *argv))
 		goto done;
 
 	file = open_executable (argv[0]);
@@ -1151,11 +1141,12 @@ load (const char *file_name, struct intr_frame *if_) {
 	if (!load_program_headers (file, &ehdr))
 		goto done;
 
-	if (!setup_initial_stack (if_, argv, argc))
+	if(!setup_initial_stack (if_, argv, argc))
 		goto done;
 
 	if_->rip = ehdr.e_entry;
 	success = true;
+
 
 done:
 	if (fn_copy != NULL)
@@ -1202,8 +1193,7 @@ static bool install_page (void *upage, void *kpage, bool writable);
  */
 static bool
 load_segment (struct file *file, off_t ofs, uint8_t *upage,
-              uint32_t read_bytes, uint32_t zero_bytes,
-              bool writable) {
+              uint32_t read_bytes, uint32_t zero_bytes, bool writable) {
 	ASSERT ((read_bytes + zero_bytes) % PGSIZE == 0);
 	ASSERT (pg_ofs (upage) == 0);
 	ASSERT (ofs % PGSIZE == 0);
@@ -1229,7 +1219,8 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
 		 */
 		if (page_read_bytes > 0) {
 			lock_acquire (&filesys_lock);
-			off_t bytes_read = file_read_at (file, kpage, page_read_bytes, ofs);
+			off_t bytes_read =
+			        file_read_at (file, kpage, page_read_bytes, ofs);
 			lock_release (&filesys_lock);
 			if (bytes_read != (off_t) page_read_bytes) {
 				palloc_free_page (kpage);
@@ -1268,7 +1259,8 @@ setup_stack (struct intr_frame *if_) {
 
 	kpage = palloc_get_page (PAL_USER | PAL_ZERO);
 	if (kpage != NULL) {
-		success = install_page (((uint8_t *) USER_STACK) - PGSIZE, kpage, true);
+		success =
+		        install_page (((uint8_t *) USER_STACK) - PGSIZE, kpage, true);
 		if (success)
 			if_->rsp = USER_STACK;
 		else
@@ -1301,8 +1293,8 @@ install_page (void *upage, void *kpage, bool writable) {
 
 #else
 /*
- * 여기부터의 코드는 프로젝트 3 이후에 사용된다.
- * 프로젝트 2만을 위한 함수를 구현하려면 위쪽 블록에 구현하라.
+ * 여기부터의 코드는 project 3 이후에 사용된다.
+ * project 2만을 위한 함수를 구현하려면 위쪽 블록에 구현하라.
  */
 
 static bool
@@ -1311,11 +1303,12 @@ lazy_load_segment (struct page *page, void *aux_) {
 	uint8_t *kva = page->frame->kva;
 	bool success = false;
 
-	GOTO_IF (aux == NULL || aux->file == NULL, done);
+	if (aux == NULL || aux->file == NULL)
+		goto done;
 
 	lock_acquire (&filesys_lock);
-	if (file_read_at (aux->file, kva, aux->read_bytes, aux->ofs) == (off_t) aux->read_bytes) {
-		memset (kva + aux->read_bytes, 0, aux->zero_bytes);
+	if (file_read_at (aux->file, kva, aux->page_read_bytes, aux->ofs) == (off_t) aux->page_read_bytes) {
+		memset (kva + aux->page_read_bytes, 0, aux->page_zero_bytes);
 		success = true;
 	}
 	lock_release (&filesys_lock);
@@ -1350,33 +1343,38 @@ done:
 static bool
 load_segment (struct file *file, off_t ofs, uint8_t *upage,
               uint32_t read_bytes, uint32_t zero_bytes, bool writable) {
+
 	ASSERT ((read_bytes + zero_bytes) % PGSIZE == 0);
 	ASSERT (pg_ofs (upage) == 0);
 	ASSERT (ofs % PGSIZE == 0);
 
 	while (read_bytes > 0 || zero_bytes > 0) {
-		// PAGE_READ_BYTES 바이트를 읽고  PAGE_ZERO_BYTES 바이트를 0으로 채울 크기 계산
+		/*
+		 * 이 페이지를 어떻게 채울지 계산한다.
+		 * FILE에서 PAGE_READ_BYTES 바이트를 읽고
+		 * 마지막 PAGE_ZERO_BYTES 바이트를 0으로 채운다.
+		 */
 		size_t page_read_bytes = read_bytes < PGSIZE ? read_bytes : PGSIZE;
 		size_t page_zero_bytes = PGSIZE - page_read_bytes;
-		struct lazy_load_arg *aux = malloc (sizeof *aux);
 
+		struct lazy_load_arg * aux = malloc(sizeof *aux);
 		RETURN_VALUE_IF (aux == NULL, false);
 
-		aux->file = file_reopen (file);
+		aux->file = file_reopen(file);
 		if (aux->file == NULL) {
 			free (aux);
 			return false;
 		}
 		aux->ofs = ofs;
-		aux->read_bytes = page_read_bytes;
-		aux->zero_bytes = page_zero_bytes;
+		aux->page_read_bytes = page_read_bytes;
+		aux->page_zero_bytes = page_zero_bytes;
 
 		if (!vm_alloc_page_with_initializer (VM_ANON, upage, writable,
 		                                     lazy_load_segment, aux)) {
 			file_close (aux->file);
 			free(aux);
-			return false;																		
-		}	
+			return false;
+		}
 		/*
 		 * 다음 페이지로 진행한다.
 		 */

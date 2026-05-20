@@ -1,15 +1,13 @@
-/* vm.c: 가상 메모리 객체의 공통 인터페이스. */
+/* vm.c: Generic interface for virtual memory objects. */
 
-#include <stddef.h>
-#include <stdint.h>
 #include <string.h>
-#include "threads/synch.h"
 #include "threads/malloc.h"
-#include "threads/mmu.h"
 #include "threads/vaddr.h"
 #include "vm/vm.h"
 #include "vm/inspect.h"
-
+#include "hash.h"
+#include "userprog/process.h"
+#include "threads/mmu.h"
 #define STACK_MAX ((uintptr_t) 1 << 20) /* 유저 스택 최대 크기: 1MB */
 
 static struct list frame_table;
@@ -19,11 +17,9 @@ static struct list_elem* clock_ptr;
 /* 각 하위 시스템의 초기화 코드를 호출해 가상 메모리 하위 시스템을 초기화한다. */
 void
 vm_init (void) {
-	list_init (&frame_table);
-	lock_init (&frame_table_lock);
 	vm_anon_init ();
 	vm_file_init ();
-#ifdef EFILESYS /* 프로젝트 4용 */
+#ifdef EFILESYS  /* For project 4 */
 	pagecache_init ();
 #endif
 	register_inspect_intr ();
@@ -41,29 +37,24 @@ enum vm_type
 page_get_type (struct page *page) {
 	int ty = VM_TYPE (page->operations->type);
 	switch (ty) {
-	case VM_UNINIT:
-		return VM_TYPE (page->uninit.type);
-	case VM_ANON:
-		return VM_TYPE (page->anon.type);
-	default:
-		return ty;
+		case VM_UNINIT:
+			return VM_TYPE (page->uninit.type);
+		default:
+			return ty;
 	}
 }
 
 /* 보조 함수들 */
-static struct spt_entry *spt_entry_from_page (struct page *page);
-static uint64_t spt_entry_hash (const struct hash_elem *e, void *aux);
-static bool spt_entry_less (const struct hash_elem *a,
-                            const struct hash_elem *b, void *aux);
-static void spt_entry_destroy (struct hash_elem *e, void *aux);
 static struct frame *vm_get_victim (void);
 static bool vm_do_claim_page (struct page *page);
 static struct frame *vm_evict_frame (void);
+static uint64_t page_hash (const struct hash_elem *e, void *aux UNUSED);
+static bool page_less (const struct hash_elem *a, const struct hash_elem *b, void *aux UNUSED);
 static bool vm_fault_addr_invalid (void *addr);
 static bool vm_handle_not_present_fault (struct intr_frame *f, void *addr,
                                          bool user, bool write);
 static bool vm_claim_spt_page (void *addr, bool write);
-static bool vm_handle_unwritable_spt_page (struct page *page);
+static bool vm_handle_unwritable_spt_page (struct page *page UNUSED);
 static bool vm_should_grow_stack (struct intr_frame *f, void *addr, bool user);
 static bool vm_grow_stack_and_claim (void *addr);
 static bool vm_handle_write_protect_fault (void *addr, bool write);
@@ -72,19 +63,6 @@ static bool vm_handle_cow (struct page *page) UNUSED;
 static bool vm_copy_cow_page (struct page *page, struct frame *old_frame) UNUSED;
 static bool vm_remap_page (struct page *page, struct frame *frame,
                            bool writable) UNUSED;
-static bool spt_copy_page (struct supplemental_page_table *dst,
-                           struct page *page);
-static bool spt_copy_uninit_page (struct page *page);
-static bool spt_copy_anon_page (struct supplemental_page_table *dst,
-                                struct page *page);
-static bool spt_copy_lazy_aux (struct page *page, void **aux);
-static void spt_free_lazy_aux (void *aux);
-static void vm_destroy_page_frame (struct page *page);
-
-static struct spt_entry *
-spt_entry_from_page (struct page *page) {
-	return (struct spt_entry *) ((char *) page - offsetof (struct spt_entry, page));
-}
 
 static void
 vm_destroy_page_frame (struct page *page);
@@ -92,100 +70,108 @@ static void
 spt_page_destroy (struct hash_elem *e, void *aux UNUSED);
 
 static uint64_t
-spt_entry_hash (const struct hash_elem *e, void *aux UNUSED) {
-	struct spt_entry *entry = hash_entry (e, struct spt_entry, hash_elem);
-	return hash_bytes (&entry->page.va, sizeof entry->page.va);
+page_hash (const struct hash_elem *e, void *aux UNUSED) {
+	struct page *item = hash_entry (e, struct page, hash_elem);
+	uint64_t hash_va = hash_bytes (&item->va, sizeof item->va);
+
+	return hash_va;
 }
 
 static bool
-spt_entry_less (const struct hash_elem *a,
-                const struct hash_elem *b, void *aux UNUSED) {
-	struct spt_entry *left_entry = hash_entry (a, struct spt_entry, hash_elem);
-	struct spt_entry *right_entry = hash_entry (b, struct spt_entry, hash_elem);
-	return (uintptr_t) left_entry->page.va < (uintptr_t) right_entry->page.va;
+page_less (const struct hash_elem *a, const struct hash_elem *b,
+		void *aux UNUSED) {
+	struct page *page_one = hash_entry (a, struct page, hash_elem);
+	struct page *page_two = hash_entry (b, struct page, hash_elem);
+	return page_one->va < page_two->va;
 }
 
-static void
-spt_entry_destroy (struct hash_elem *e, void *aux UNUSED) {
-	struct spt_entry *entry = hash_entry (e, struct spt_entry, hash_elem);
-	vm_destroy_page_frame (&entry->page);
-	destroy (&entry->page);
-	free (entry);
-}
 
 /* 초기화 함수를 가진 대기 상태 페이지 객체를 만든다. 페이지가 필요하면 직접
  * 만들지 말고 이 함수나 vm_alloc_page()를 통해 만들어야 한다. */
 bool
 vm_alloc_page_with_initializer (enum vm_type type, void *upage, bool writable,
-                                vm_initializer *init, void *aux) {
-	ASSERT (VM_TYPE (type) != VM_UNINIT)
+		vm_initializer *init, void *aux) {
+
+	ASSERT(pg_ofs(upage) == 0);
+	ASSERT (VM_TYPE(type) != VM_UNINIT);
 
 	struct supplemental_page_table *spt = &thread_current ()->spt;
-	enum vm_type page_type = VM_TYPE (type);
-	struct spt_entry *entry;
-	bool (*page_initializer) (struct page *, enum vm_type, void *) = NULL;
 
-	switch (page_type) {
-	case VM_ANON:
-		page_initializer = anon_initializer;
-		break;
-	case VM_FILE:
-		page_initializer = file_backed_initializer;
-		break;
-	default:
-		return false;
-	}
+	if (upage == NULL || spt_find_page (spt, upage) != NULL)
+		goto err;
 
-	RETURN_VALUE_IF (upage == NULL || spt_find_page (spt, upage) != NULL, false);
+		struct page* page = malloc(sizeof *page);
+		if (page == NULL)
+			goto err;
 
-	entry = malloc (sizeof *entry);
-	RETURN_VALUE_IF (entry == NULL, false);
+		bool (*initializer)(struct page *page, enum vm_type type, void *kva) = NULL;
 
-	uninit_new (&entry->page, pg_round_down (upage), init, type, aux,
-	            page_initializer);
-	entry->page.writable = writable;
+		switch (VM_TYPE(type)) {
+			case VM_ANON:
+				initializer = anon_initializer;
+				break;
 
-	if (!spt_insert_page (spt, &entry->page)) {
-		vm_dealloc_page (&entry->page);
-		return false;
-	}
+			case VM_FILE:
+				initializer = file_backed_initializer;
+				break;
 
-	return true;
+			default:
+				free(page);
+				goto err;
+		}
+
+		uninit_new(page, upage, init, type, aux, initializer);
+		page->writable = writable;
+
+		if(!spt_insert_page(spt, page)) {
+			free(page);
+			goto err;
+		}
+		else
+			return true;
+
+err:
+	return false;
 }
 
-/* SPT에서 VA에 해당하는 페이지를 찾아 반환한다. 오류가 있으면 NULL을 반환한다. */
+/* Find VA from spt and return page. On error, return NULL. */
+/* 페이지 폴트가 발생하면 spt 에서 va로 메타 데이터를 찾는 함수 */
 struct page *
 spt_find_page (struct supplemental_page_table *spt, void *va) {
-	struct spt_entry probe;
-	struct hash_elem *found;
 
 	RETURN_VALUE_IF (spt == NULL || va == NULL, NULL);
 
-	probe.page.va = pg_round_down (va);
-	found = hash_find (&spt->pages, &probe.hash_elem);
+	void * rounded_va = pg_round_down(va);
+	struct page temp;
+	temp.va = rounded_va;
 
+	struct hash_elem * found = hash_find(&spt->hash_table, &temp.hash_elem);
 	RETURN_VALUE_IF (found == NULL, NULL);
 
-	return &hash_entry (found, struct spt_entry, hash_elem)->page;
+	struct page *found_page = hash_entry(found, struct page, hash_elem);
+	return found_page;
 }
-/* PAGE를 검증한 뒤 SPT에 삽입한다. */
-bool
-spt_insert_page (struct supplemental_page_table *spt, struct page *page) {
-	RETURN_VALUE_IF (spt == NULL || page == NULL, false);
 
-	page->va = pg_round_down (page->va);
-	return hash_insert (&spt->pages, &spt_entry_from_page (page)->hash_elem) == NULL;
+/* Insert PAGE into spt with validation. */
+bool
+spt_insert_page (struct supplemental_page_table *spt,
+		struct page *page) {
+
+	RETURN_VALUE_IF (spt == NULL || page == NULL, false);
+	ASSERT(pg_ofs(page->va) == 0);
+
+	return hash_insert(&spt->hash_table, &page->hash_elem) == NULL;
 }
 
 void
 spt_remove_page (struct supplemental_page_table *spt, struct page *page) {
 	RETURN_IF (spt == NULL || page == NULL);
 
-	hash_delete (&spt->pages, &spt_entry_from_page (page)->hash_elem);
+	hash_delete (&spt->hash_table, &page->hash_elem);
 	vm_dealloc_page (page);
 }
 
-// 교체 대상이 될 frame 뽑기
+/* 교체 대상이 될 struct frame을 고른다. */
 static struct frame *
 vm_get_victim (void) {
 	struct frame *victim = NULL;
@@ -209,7 +195,7 @@ vm_get_victim (void) {
         }
 
         pml4_set_accessed(clock_frame->owner_thread->pml4, clock_frame->page->va, false);
-        
+
         clock_ptr = list_next(clock_ptr);
     }
 
@@ -230,14 +216,22 @@ vm_evict_frame (void) {
 	return victim;
 }
 
-/* palloc()으로 프레임을 얻는다. 사용 가능한 페이지가 없으면 페이지를 내보낸 뒤
- * 그 프레임을 반환한다. 이 함수는 항상 유효한 주소를 반환해야 한다. 즉 사용자
- * 풀 메모리가 가득 차면 프레임을 교체해 사용 가능한 메모리 공간을 확보한다. */
+/* palloc()을 호출해서 프레임을 얻는다.
+ * 사용 가능한 페이지가 없으면, 기존 페이지 하나를 eviction해서
+ * 그 프레임을 반환한다.
+ *
+ * 이 함수는 항상 유효한 주소를 반환한다.
+ * 즉, user pool 메모리가 가득 차 있더라도 페이지를 eviction해서
+ * 사용할 수 있는 메모리 공간을 확보한다.
+ */
+/* user pool 에서 공간 할당 받아오기
+frame에 올리기 위해 할당받는곳
+ */
 static struct frame *
 vm_get_frame (void) {
 	void* kva = palloc_get_page (PAL_USER);
 
-	if(kva == NULL) 
+	if(kva == NULL)
 		return vm_evict_frame ();
 
 	struct frame *frame = malloc(sizeof* frame);
@@ -245,10 +239,11 @@ vm_get_frame (void) {
 		palloc_free_page(kva);
 		return NULL;
 	}
-	
+
 	frame->kva = kva;
 	frame->page = NULL;
 	frame->owner_thread = thread_current();
+	frame->ref_count = 1;
 
 	lock_acquire(&frame_lock);
 	list_push_back(&frame_table, &frame->elem);
@@ -257,7 +252,7 @@ vm_get_frame (void) {
 	return frame;
 }
 
-// 스택 확장
+/* 스택을 확장한다. */
 static void
 vm_stack_growth (void *addr UNUSED) {
 	struct thread *curr = thread_current ();
@@ -277,13 +272,11 @@ vm_stack_growth (void *addr UNUSED) {
 	}
 }
 
-// 쓰기 보호 페이지 폴트
+/* 쓰기 보호 페이지에서 발생한 폴트를 처리한다. */
 static bool
 vm_handle_wp (struct page *page) {
 	struct thread *curr = thread_current ();
 
-	// 논리적으로 쓰기 가능한 페이지가 실제 PTE에서는 read-only인 경우,
-	// COW 페이지일 수 있으므로 전용 처리로 넘김
 	RETURN_VALUE_IF (page == NULL || curr == NULL || curr->pml4 == NULL, false);
 	RETURN_VALUE_IF (!page->writable, false);
 	RETURN_VALUE_IF (page->frame == NULL || page->frame->kva == NULL, false);
@@ -298,7 +291,8 @@ vm_handle_cow (struct page *page UNUSED) {
 	struct frame *old_frame = page->frame;
 
 	RETURN_VALUE_IF (old_frame == NULL || old_frame->kva == NULL, false);
-	RETURN_VALUE_IF (old_frame->ref_count > 1, vm_copy_cow_page (page, old_frame));
+	RETURN_VALUE_IF (old_frame->ref_count > 1,
+	                 vm_copy_cow_page (page, old_frame));
 
 	return vm_remap_page (page, old_frame, true);
 }
@@ -312,7 +306,6 @@ vm_copy_cow_page (struct page *page UNUSED, struct frame *old_frame UNUSED) {
 	RETURN_VALUE_IF (new_frame == NULL, false);
 
 	memcpy (new_frame->kva, old_frame->kva, PGSIZE);
-
 	old_frame->ref_count--;
 
 	return vm_remap_page (page, new_frame, true);
@@ -328,22 +321,24 @@ vm_remap_page (struct page *page UNUSED, struct frame *frame UNUSED,
 	RETURN_VALUE_IF (page->va == NULL || frame->kva == NULL, false);
 
 	pml4_clear_page (curr->pml4, page->va);
-	RETURN_VALUE_IF (!pml4_set_page (curr->pml4, page->va, frame->kva, writable), false);
+	RETURN_VALUE_IF (!pml4_set_page (curr->pml4, page->va,
+	                                 frame->kva, writable), false);
 
 	frame->page = page;
-	frame->owner = curr;
+	frame->owner_thread = curr;
 	page->frame = frame;
 	return true;
 }
+
 
 // OS가 복구할 수 있는 page fault를 처리
 bool
 vm_try_handle_fault (struct intr_frame *f, void *addr,
                      bool user, bool write, bool not_present) {
 	RETURN_VALUE_IF (vm_fault_addr_invalid (addr), false);
-	return !not_present ? vm_handle_write_protect_fault (addr, write) : vm_handle_not_present_fault (f, addr, user, write);
+	RETURN_VALUE_IF (!not_present, vm_handle_write_protect_fault (addr, write));
+	return vm_handle_not_present_fault (f, addr, user, write);
 }
-
 // fault 주소가 NULL이거나 커널 영역이면 복구할 수 없는 fault로 판단
 static bool
 vm_fault_addr_invalid (void *addr) {
@@ -392,86 +387,91 @@ vm_should_grow_stack (struct intr_frame *f, void *addr, bool user) {
 	uintptr_t fault_addr = (uintptr_t) addr;
 	uintptr_t rsp = user ? (uintptr_t) f->rsp : (uintptr_t) curr->user_rsp;
 
-	RETURN_VALUE_IF (rsp < 8, false);
+	RETURN_VALUE_IF (rsp < 32, false);
 
 	return fault_addr < (uintptr_t) USER_STACK &&
 	       fault_addr >= (uintptr_t) (USER_STACK - STACK_MAX) &&
-	       fault_addr >= rsp - 8;
+	       fault_addr >= rsp - 32;
 }
 
-// 스택 페이지 claim
+/* 스택 페이지를 만들고 즉시 claim한다. */
 static bool
 vm_grow_stack_and_claim (void *addr) {
+	/* TODO: vm_stack_growth()에서 pg_round_down(addr)에 VM_ANON 스택
+	 * 페이지를 SPT에 추가하게 만든 뒤 claim한다. */
 	vm_stack_growth (addr);
-	return spt_find_page (&thread_current ()->spt, addr) != NULL;
+	return vm_claim_page (pg_round_down (addr));
 }
 
-// 권한 위반 fault 처리
+/* 이미 존재하는 페이지의 권한 위반 fault를 처리한다. */
 static bool
 vm_handle_write_protect_fault (void *addr, bool write) {
+	struct supplemental_page_table *spt = &thread_current ()->spt;
+	struct page *page = spt_find_page (spt, addr);
 	RETURN_VALUE_IF (!write, false);
-	struct page *page = spt_find_page (&thread_current ()->spt, addr);
 	RETURN_VALUE_IF (page == NULL, false);
 
 	return vm_handle_wp (page);
 }
 
-// 페이지 해제
+/* Free the page.
+ * DO NOT MODIFY THIS FUNCTION. */
 void
 vm_dealloc_page (struct page *page) {
-	RETURN_IF (page == NULL);
-	spt_entry_destroy (&spt_entry_from_page (page)->hash_elem, NULL);
+	destroy (page);
+	free (page);
 }
 
-// VA에 실제 메모리 올림
+/* Claim the page that allocate on VA. */
+/* 인자로 받은 va에 해당하는 page를 SPT에서 찾고, 그 page를 실제 frame에 올리는 함수 */
 bool
 vm_claim_page (void *va) {
 	struct thread *curr = thread_current ();
 	RETURN_VALUE_IF (va == NULL || curr == NULL, false);
 
 	struct supplemental_page_table *spt = &curr->spt;
-	struct page *page = spt_find_page (spt, va);
+	struct page* page = spt_find_page(spt, va);
 	RETURN_VALUE_IF (page == NULL, false);
 
 	return vm_do_claim_page (page);
+
 }
 
-// PAGE 실제 메모리에 올리고 MMU 매핑
+/* PAGE를 실제 메모리에 올리고 MMU 매핑을 설정한다. */
 static bool
 vm_do_claim_page (struct page *page) {
 	struct thread *curr = thread_current ();
+	RETURN_VALUE_IF (page == NULL || curr == NULL, false);
+
 	struct frame *frame = vm_get_frame ();
-	RETURN_VALUE_IF (page == NULL || frame == NULL || curr == NULL, false);
+	RETURN_VALUE_IF(frame == NULL , false);
 
 	frame->owner_thread = curr;
 	frame->page = page;
-	frame->owner = curr;
 	page->frame = frame;
 
 	if (!pml4_set_page (curr->pml4, page->va, frame->kva, page->writable)) {
-		vm_destroy_page_frame (page);
+		frame->page = NULL;
+		page->frame = NULL;
+		palloc_free_page (frame->kva);
+		free (frame);
 		return false;
 	}
 
-	if (!swap_in (page, frame->kva)) {
-		vm_destroy_page_frame (page);
-		return false;
-	}
-	return true;
+	return swap_in (page, frame->kva);
 }
 
-/* 새 보조 페이지 테이블을 초기화한다. */
+/* Initialize new supplemental page table */
 void
 supplemental_page_table_init (struct supplemental_page_table *spt) {
-	ASSERT (spt != NULL);
-	hash_init (&spt->pages, spt_entry_hash, spt_entry_less, NULL);
+	ASSERT(hash_init(&spt->hash_table, page_hash, page_less, NULL));
+	ASSERT(hash_empty(&spt->hash_table));
 }
 
-// src 보조 페이지 테이블을 dst로 복사
+/* Copy supplemental page table from src to dst */
 bool
-supplemental_page_table_copy (struct supplemental_page_table *dst,
-                              struct supplemental_page_table *src) {
-	struct hash_iterator i;
+supplemental_page_table_copy (struct supplemental_page_table *dst UNUSED,
+                              struct supplemental_page_table *src UNUSED) {
 
   struct hash_iterator i;
   hash_first (&i, &src->hash_table);
@@ -483,119 +483,7 @@ supplemental_page_table_copy (struct supplemental_page_table *dst,
 	return true;
 }
 
-static bool
-spt_copy_page (struct supplemental_page_table *dst, struct page *page) {
-	enum vm_type page_type;
-
-	RETURN_VALUE_IF (page == NULL, false);
-
-	if (page->operations->type == VM_UNINIT) {
-		page_type = VM_TYPE (page->uninit.type);
-		RETURN_VALUE_IF (page_type == VM_FILE, true);
-		RETURN_VALUE_IF (page_type != VM_ANON, false);
-		return spt_copy_uninit_page (page);
-	}
-
-	page_type = page_get_type (page);
-	switch (page_type) {
-	case VM_ANON:
-		return spt_copy_anon_page (dst, page);
-	case VM_FILE:
-		return true;
-	default:
-		return false;
-	}
-}
-
-static bool
-spt_copy_uninit_page (struct page *page) {
-	void *aux = NULL;
-
-	RETURN_VALUE_IF (!spt_copy_lazy_aux (page, &aux), false);
-
-	if (!vm_alloc_page_with_initializer (page->uninit.type, page->va,
-	                                     page->writable, page->uninit.init, aux)) {
-		spt_free_lazy_aux (aux);
-		return false;
-	}
-	return true;
-}
-
-static bool
-spt_copy_anon_page (struct supplemental_page_table *dst, struct page *page) {
-	enum vm_type type;
-	struct page *child_page;
-
-	RETURN_VALUE_IF (dst == NULL || page == NULL, false);
-
-	type = page->anon.type;
-	RETURN_VALUE_IF (!vm_alloc_page (type, page->va, page->writable), false);
-
-	child_page = spt_find_page (dst, page->va);
-	RETURN_VALUE_IF (child_page == NULL, false);
-	RETURN_VALUE_IF (!vm_do_claim_page (child_page), false);
-
-	return anon_copy_page (child_page, page);
-}
-
-static bool
-spt_copy_lazy_aux (struct page *page, void **aux) {
-	struct lazy_load_arg *src_aux = page->uninit.aux;
-	struct lazy_load_arg *dst_aux;
-
-	*aux = NULL;
-	RETURN_VALUE_IF (src_aux == NULL, true);
-
-	dst_aux = malloc (sizeof *dst_aux);
-	RETURN_VALUE_IF (dst_aux == NULL, false);
-
-	memcpy (dst_aux, src_aux, sizeof *dst_aux);
-	if (dst_aux->file != NULL) {
-		dst_aux->file = file_reopen (dst_aux->file);
-		if (dst_aux->file == NULL) {
-			free (dst_aux);
-			return false;
-		}
-	}
-
-	*aux = dst_aux;
-	return true;
-}
-
-static void
-spt_free_lazy_aux (void *aux) {
-	struct lazy_load_arg *lazy_aux = aux;
-
-	RETURN_IF (lazy_aux == NULL);
-
-	if (lazy_aux->file != NULL)
-		file_close (lazy_aux->file);
-	free (lazy_aux);
-}
-
-static void
-vm_destroy_page_frame (struct page *page) {
-	RETURN_IF (page == NULL || page->frame == NULL);
-
-	struct frame *frame = page->frame;
-
-	if (frame->owner != NULL && frame->owner->pml4 != NULL)
-		pml4_clear_page (frame->owner->pml4, page->va);
-
-	lock_acquire (&frame_table_lock);
-	list_remove (&frame->frame_elem);
-	lock_release (&frame_table_lock);
-
-	if (frame->kva != NULL)
-		palloc_free_page (frame->kva);
-
-	frame->page = NULL;
-	frame->owner = NULL;
-	page->frame = NULL;
-	free (frame);
-}
-
-// SPT 정리
+/* Free the resource hold by the supplemental page table */
 void
 supplemental_page_table_kill (struct supplemental_page_table *spt UNUSED) {
 	/* TODO: Destroy all the supplemental_page_table hold by thread and
@@ -631,6 +519,5 @@ vm_destroy_page_frame (struct page *page) {
 	frame->page = NULL;
 	frame->owner_thread = NULL;
 	free (frame);
-	
-}
 
+}

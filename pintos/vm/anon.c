@@ -1,23 +1,19 @@
-/* anon.c: 디스크 이미지에 연결되지 않은 페이지, 즉 익명 페이지 구현. */
+/* anon.c: Implementation of page for non-disk image (a.k.a. anonymous page). */
 
 #include "vm/vm.h"
 #include "devices/disk.h"
 #include "bitmap.h"
 #include "threads/mmu.h"
+#include <string.h>
 
-#define SECTORS_PER_PAGE (PGSIZE / DISK_SECTOR_SIZE)
-#define SWAP_SLOT_NONE   ((size_t) -1)
-
-/* 아래 줄은 수정하지 말 것. */
+/* DO NOT MODIFY BELOW LINE */
 static struct disk *swap_disk;
-static struct bitmap *swap_bitmap;
-static struct lock swap_lock;
 static bool anon_swap_in (struct page *page, void *kva);
 static bool anon_swap_out (struct page *page);
 static void anon_destroy (struct page *page);
 static bool anon_copy (struct supplemental_page_table *dst, struct page *src_page);
 
-/* 이 구조체는 수정하지 말 것. */
+/* DO NOT MODIFY this struct */
 static const struct page_operations anon_ops = {
 	.swap_in = anon_swap_in,
 	.swap_out = anon_swap_out,
@@ -48,16 +44,13 @@ vm_anon_init (void) {
 	lock_init(&swap_lock);
 }
 
-// 익명 페이지 초기화
+/* Initialize the file mapping */
 bool
-anon_initializer (struct page *page, enum vm_type type, void *kva UNUSED) {
-	RETURN_VALUE_IF (page == NULL, false);
+anon_initializer (struct page *page, enum vm_type type, void *kva) {
+	/* Set up the handler */
+	ASSERT(page != NULL);
+
 	page->operations = &anon_ops;
-	page->anon.type = type;
-	page->anon.swapped = false;
-	page->anon.swap_slot = SWAP_SLOT_NONE;
-	return true;
-}
 
 	struct anon_page *anon_page = &page->anon;
 	anon_page->swap_idx = BITMAP_ERROR;
@@ -78,7 +71,7 @@ anon_swap_in (struct page *page, void *kva) {
 	anon_page->swapped = false;
 	anon_page->swap_idx = BITMAP_ERROR;
 	pml4_set_page(thread_current()->pml4, page->va, kva, page->writable);
-	
+
 	return true;
 }
 

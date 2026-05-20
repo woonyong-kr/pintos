@@ -41,7 +41,7 @@ void seek (int fd, unsigned position);
 unsigned tell (int fd);
 int filesize (int fd);
 void check_address (const void *addr);
-size_t* mmap(void *addr, size_t length, int writable, int fd, off_t offset);
+void *mmap(void *addr, size_t length, int writable, int fd, off_t offset);
 void munmap (void *addr);
 static bool user_page_present (struct thread *curr, const void *addr);
 static bool user_page_accessible (struct thread *curr, const void *addr,
@@ -107,7 +107,7 @@ syscall_init (void) {
  * 메인 시스템 콜 인터페이스.
  */
 void
-syscall_handler (struct intr_frame *f) {
+syscall_handler (struct intr_frame *f UNUSED) {
 #ifdef VM
 	thread_current ()->user_rsp = f->rsp;
 #endif
@@ -157,11 +157,11 @@ syscall_handler (struct intr_frame *f) {
 		f->R.rax = tell (f->R.rdi);
 		break;
 	case SYS_MMAP:
-		f->R.rax = mmap(f->R.rdi, f->R.rsi, f->R.rdx,
-		                f->R.r10, f->R.r8);
+		f->R.rax = (uint64_t) mmap ((void *) f->R.rdi, f->R.rsi,
+		                            f->R.rdx, f->R.r10, f->R.r8);
 		break;
 	case SYS_MUNMAP:
-		munmap(f->R.rdi);
+		munmap ((void *) f->R.rdi);
 		break;
 	default:
 		break;
@@ -400,37 +400,29 @@ tell (int fd) {
 	lock_release (&filesys_lock);
 	return position;
 }
-
-#ifdef VM
-void *
-mmap (void *addr, size_t length, int writable, int fd, off_t offset) {
-	struct file *file;
-
-	if (fd < 2)
-		return NULL;
-
-	file = process_get_file (fd);
-	if (file == NULL)
-		return NULL;
-
-	return do_mmap (addr, length, writable, file, offset);
-}
-
-void
-munmap (void *addr) {
-	do_munmap (addr);
-}
-#endif
-
 /* 여기서부턴 헬퍼 함수 기술 */
+static bool
+user_page_present (struct thread *curr, const void *addr) {
+	uint64_t *pte;
+
+	if (curr == NULL || curr->pml4 == NULL)
+		return false;
+
+	pte = pml4e_walk (curr->pml4, (uint64_t) addr, 0);
+	if (pte == NULL || (*pte & PTE_P) == 0)
+		return false;
+
+	return true;
+}
+
 static bool
 user_page_accessible (struct thread *curr, const void *addr, bool write) {
 	uint64_t *pte;
 
-	RETURN_VALUE_IF (curr == NULL || curr->pml4 == NULL, false);
-	pte = pml4e_walk (curr->pml4, (uint64_t) addr, 0);
-	RETURN_VALUE_IF (pte == NULL || (*pte & PTE_P) == 0, false);
+	if (!user_page_present (curr, addr))
+		return false;
 
+	pte = pml4e_walk (curr->pml4, (uint64_t) addr, 0);
 	return !write || is_writable (pte);
 }
 
@@ -442,10 +434,17 @@ try_claim_user_addr (const void *addr, bool write, struct intr_frame *f) {
 	(void) f;
 #endif
 
-	RETURN_VALUE_IF (addr == NULL || curr == NULL || curr->pml4 == NULL, false);
-	RETURN_VALUE_IF (!is_user_vaddr (addr), false);
-	RETURN_VALUE_IF (user_page_accessible (curr, addr, write), true);
-	RETURN_VALUE_IF (write && user_page_accessible (curr, addr, false), false);
+	if (addr == NULL || curr == NULL || curr->pml4 == NULL)
+		return false;
+
+	if (!is_user_vaddr (addr))
+		return false;
+
+	if (user_page_accessible (curr, addr, write))
+		return true;
+
+	if (write && user_page_present (curr, addr))
+		return false;
 
 #ifdef VM
 	void *upage = pg_round_down (addr);
@@ -462,7 +461,8 @@ try_claim_user_addr (const void *addr, bool write, struct intr_frame *f) {
 		uintptr_t rsp = f->rsp;
 
 		if (uaddr < (uintptr_t) USER_STACK && rsp >= 8 && uaddr >= rsp - 8) {
-			RETURN_VALUE_IF (!vm_try_handle_fault (f, (void *) addr, true, write, true), false);
+			if (!vm_try_handle_fault (f, (void *) addr, true, write, true))
+				return false;
 			return user_page_accessible (curr, addr, write);
 		}
 	}
@@ -578,7 +578,7 @@ copy_in_string (const char *str, struct intr_frame *f) {
 	return kernel;
 }
 
-size_t*
+void *
 mmap(void *addr, size_t length, int writable, int fd, off_t offset){
 	RETURN_NULL_IF(addr == NULL || pg_ofs(addr) || is_kernel_vaddr(addr));
 	RETURN_NULL_IF(offset % PGSIZE != 0);

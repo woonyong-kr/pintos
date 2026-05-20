@@ -1,20 +1,16 @@
 #ifndef VM_VM_H
 #define VM_VM_H
-#include <stddef.h>
 #include <stdbool.h>
-#include "filesys/off_t.h"
-#include "hash.h"
-#include "list.h"
 #include "threads/palloc.h"
-
+#include "hash.h"
 enum vm_type {
 	/* 아직 초기화되지 않은 페이지 */
 	VM_UNINIT = 0,
-	/* 파일과 관련 없는 페이지, 즉 익명 페이지 */
+	/* 파일과 관련 없는 페이지, 즉 anonymous 페이지 */
 	VM_ANON = 1,
 	/* 파일과 관련된 페이지 */
 	VM_FILE = 2,
-	/* 페이지 캐시를 담는 페이지, 프로젝트 4용 */
+	/* 페이지 캐시를 담는 페이지, project 4용 */
 	VM_PAGE_CACHE = 3,
 
 	/* 상태를 저장하는 비트 플래그 */
@@ -36,28 +32,20 @@ enum vm_type {
 #endif
 
 struct page_operations;
-struct file;
+struct supplemental_page_table;
 struct thread;
 
 #define VM_TYPE(type) ((type) & 7)
 
-struct lazy_load_arg {
-	struct file *file;
-	off_t ofs;
-	size_t read_bytes;
-	size_t zero_bytes;
-};
-
 /* "page"의 표현.
  * 일종의 "부모 클래스" 역할을 하며,
- * uninit_page, file_page, anon_page, 페이지 캐시(프로젝트 4)라는
+ * uninit_page, file_page, anon_page, page cache(project4)라는
  * 네 가지 "자식 클래스"를 가진다.
  * 이 구조체의 미리 정의된 멤버는 삭제하거나 수정하지 말 것. */
 struct page {
 	const struct page_operations *operations;
-	void *va;            /* 유저 공간 기준 주소 */
-	struct frame *frame; /* 프레임에서 page로 되돌아오는 참조 */
-	bool writable;       /* 유저 페이지 쓰기 가능 여부 */
+	void *va;              /* 유저 공간 기준 주소 */
+	struct frame *frame;   /* frame에서 page로 되돌아오는 참조 */
 
 	struct hash_elem hash_elem;
 	bool writable;
@@ -74,23 +62,18 @@ struct page {
 	};
 };
 
-/* SPT 해시 테이블에 들어갈 페이지 엔트리. */
-struct spt_entry {
-	struct page page;
-	struct hash_elem hash_elem;
-};
-
 /* "frame"의 표현. */
 struct frame {
 	void *kva;
 	struct page *page;
 	struct list_elem elem;   // frame table에 연결하기 위한 필드
 	struct thread* owner_thread;
+	size_t ref_count;
 };
 
 /* 페이지 연산용 함수 테이블.
- * C에서 "인터페이스"를 구현하는 한 가지 방식이다.
- * "메서드" 테이블을 구조체 멤버로 넣고,
+ * C에서 "interface"를 구현하는 한 가지 방식이다.
+ * "method" 테이블을 구조체 멤버로 넣고,
  * 필요할 때마다 그 함수를 호출한다. */
 struct page_operations {
 	bool (*swap_in) (struct page *, void *);
@@ -117,7 +100,7 @@ struct lazy_load_file_arg {
  * 이 구조체 설계는 특정 방식으로 강제하지 않는다.
  * 설계는 전적으로 구현자 선택이다. */
 struct supplemental_page_table {
-	struct hash pages;
+	struct hash hash_table;
 };
 
 struct lazy_load_arg {
@@ -130,23 +113,23 @@ struct lazy_load_arg {
 #include "threads/thread.h"
 void supplemental_page_table_init (struct supplemental_page_table *spt);
 bool supplemental_page_table_copy (struct supplemental_page_table *dst,
-                                   struct supplemental_page_table *src);
+		struct supplemental_page_table *src);
 void supplemental_page_table_kill (struct supplemental_page_table *spt);
 struct page *spt_find_page (struct supplemental_page_table *spt,
-                            void *va);
+		void *va);
 bool spt_insert_page (struct supplemental_page_table *spt, struct page *page);
 void spt_remove_page (struct supplemental_page_table *spt, struct page *page);
 
 void vm_init (void);
 bool vm_try_handle_fault (struct intr_frame *f, void *addr, bool user,
-                          bool write, bool not_present);
+		bool write, bool not_present);
 
 #define vm_alloc_page(type, upage, writable) \
 	vm_alloc_page_with_initializer ((type), (upage), (writable), NULL, NULL)
 bool vm_alloc_page_with_initializer (enum vm_type type, void *upage,
-                                     bool writable, vm_initializer *init, void *aux);
+		bool writable, vm_initializer *init, void *aux);
 void vm_dealloc_page (struct page *page);
 bool vm_claim_page (void *va);
 enum vm_type page_get_type (struct page *page);
 
-#endif /* VM_VM_H */
+#endif  /* VM_VM_H */

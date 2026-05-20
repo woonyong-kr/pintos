@@ -1,22 +1,11 @@
-/* file.c: 메모리에 매핑된 파일 객체, 즉 mmap 객체 구현. */
+/* file.c: Implementation of memory backed file object (mmaped object). */
 
-#include <stdint.h>
-#include "threads/malloc.h"
-#include "threads/vaddr.h"
 #include "vm/vm.h"
 #include "devices/disk.h"
 #include "threads/malloc.h"
 #include "threads/vaddr.h"
 #include "threads/mmu.h"
 #include "string.h"
-
-struct mmap_lazy_arg {
-	struct file *file;
-	off_t ofs;
-	size_t read_bytes;
-	size_t zero_bytes;
-	void *map_start;
-};
 
 static bool file_backed_swap_in (struct page *page, void *kva);
 static bool file_backed_swap_out (struct page *page);
@@ -25,7 +14,7 @@ static bool file_copy (struct supplemental_page_table *dst, struct page *src_pag
 static bool lazy_load_file (struct page *page, void *aux_);
 static struct lock file_lock;
 
-/* 이 구조체는 수정하지 말 것. */
+/* DO NOT MODIFY this struct */
 static const struct page_operations file_ops = {
 	.swap_in = file_backed_swap_in,
 	.swap_out = file_backed_swap_out,
@@ -34,24 +23,22 @@ static const struct page_operations file_ops = {
 	.type = VM_FILE,
 };
 
-/* 파일 기반 VM을 초기화한다. */
+/* The initializer of file vm */
 void
 vm_file_init (void) {
 	lock_init(&file_lock);
 }
 
-/* 파일 기반 페이지를 초기화한다. */
+/* Initialize the file backed page */
 bool
-file_backed_initializer (struct page *page, enum vm_type type, void *kva UNUSED) {
-	struct file_page *file_page;
-
-	RETURN_VALUE_IF (page == NULL, false);
+file_backed_initializer (struct page *page, enum vm_type type, void *kva) {
+	/* Set up the handler */
 	page->operations = &file_ops;
 	struct file_page *file_page = &page->file;
 	return true;
 }
 
-/* 파일에서 내용을 읽어 페이지를 swap in한다. */
+/* Swap in the page by read contents from the file. */
 static bool
 file_backed_swap_in (struct page *page, void *kva) {
 	struct file_page *file_page = &page->file;
@@ -62,7 +49,7 @@ file_backed_swap_in (struct page *page, void *kva) {
 	return true;
 }
 
-/* 내용을 파일에 쓰기 반영해 페이지를 swap out한다. */
+/* Swap out the page by writeback contents to the file. */
 static bool
 file_backed_swap_out (struct page *page) {
 	struct file_page *file_page = &page->file;
@@ -75,7 +62,7 @@ file_backed_swap_out (struct page *page) {
 	return true;
 }
 
-/* 파일 기반 페이지를 파괴한다. PAGE 자체는 호출자가 해제한다. */
+/* Destory the file backed page. PAGE will be freed by the caller. */
 static void
 file_backed_destroy (struct page *page) {
 	struct file_page *file_page = &page->file;
@@ -86,7 +73,7 @@ file_backed_destroy (struct page *page) {
 	}
 }
 
-// mmap
+/* Do the mmap */
 void *
 do_mmap (void *addr, size_t length, int writable,
 		struct file *file, off_t offset) {
@@ -127,7 +114,7 @@ do_mmap (void *addr, size_t length, int writable,
 	return start_addr;
 }
 
-/* munmap을 수행한다. */
+/* Do the munmap */
 void
 do_munmap (void *addr) {
 	struct page* page;
