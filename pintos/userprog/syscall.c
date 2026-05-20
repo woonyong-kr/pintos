@@ -580,15 +580,18 @@ copy_in_string (const char *str, struct intr_frame *f) {
 
 size_t*
 mmap(void *addr, size_t length, int writable, int fd, off_t offset){
-	RETURN_VALUE_IF(addr == NULL || length == 0, NULL);
+	RETURN_NULL_IF(addr == NULL || pg_ofs(addr) || is_kernel_vaddr(addr));
+	RETURN_NULL_IF(offset % PGSIZE != 0);
+	RETURN_NULL_IF(length == 0);
+
 	struct file* file = thread_current()->fd_table[fd];
-	RETURN_VALUE_IF(file == NULL, NULL);
+	RETURN_NULL_IF(file == NULL);
 
 	return do_mmap(addr, length, writable, file, offset);
 }
 
 void 
 munmap (void *addr){
-	RETURN_VALUE_IF(addr == NULL, NULL);
+	RETURN_IF(addr == NULL);
 	return do_munmap(addr);
 }

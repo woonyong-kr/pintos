@@ -42,7 +42,7 @@ file_backed_swap_in (struct page *page, void *kva) {
 	struct file_page *file_page = &page->file;
 	if (file_read_at(file_page->file, kva, file_page->page_read_bytes, file_page->ofs) != file_page->page_read_bytes)
 		return false;
-	memset(file_page, 0, PGSIZE - file_page->page_read_bytes);
+	memset(kva + file_page->page_read_bytes, 0, PGSIZE - file_page->page_read_bytes);
 	file_page->swapped = false;
 	return true;
 }

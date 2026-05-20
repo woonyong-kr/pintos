@@ -472,8 +472,8 @@ supplemental_page_table_kill (struct supplemental_page_table *spt UNUSED) {
 static void
 spt_entry_destroy (struct hash_elem *e, void *aux UNUSED) {
 	struct page *page = hash_entry (e, struct page, hash_elem);
-	vm_destroy_page_frame (page);
 	destroy (page);
+	vm_destroy_page_frame (page);
 	free (page);
 }
 
@@ -483,18 +483,19 @@ vm_destroy_page_frame (struct page *page) {
 
 	struct frame *frame = page->frame;
 
-	if (frame->owner_thread != NULL && frame->owner_thread->pml4 != NULL)
-		pml4_clear_page (frame->owner_thread->pml4, page->va);
-
 	lock_acquire (&frame_lock);
+	if (clock_ptr == &frame->elem)
+		clock_ptr = list_next(&frame_table);
 	list_remove (&frame->elem);
 	lock_release (&frame_lock);
 
-	if (frame->kva != NULL)
-		palloc_free_page (frame->kva);
+	if (frame != NULL) {
+		if (frame->kva != NULL)
+			palloc_free_page (frame->kva);
 
-	frame->page = NULL;
-	frame->owner_thread = NULL;
-	page->frame = NULL;
-	free (frame);
+		frame->page = NULL;
+		frame->owner_thread = NULL;
+		frame = NULL;
+		free (frame);
+	}
 }

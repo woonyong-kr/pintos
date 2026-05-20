@@ -51,6 +51,7 @@ anon_initializer (struct page *page, enum vm_type type, void *kva) {
 
 	struct anon_page *anon_page = &page->anon;
 	anon_page->swap_idx = BITMAP_ERROR;
+	anon_page->swapped = false;
 
 	return true;
 }
@@ -102,12 +103,5 @@ anon_destroy (struct page *page) {
 		lock_release (&swap_lock);
 	}
 
-	if (page->frame != NULL) {
-		if (page->frame->kva != NULL)
-			palloc_free_page (page->frame->kva);
 
-		page->frame->page = NULL;
-		free (page->frame);
-		page->frame = NULL;
-	}
 }
