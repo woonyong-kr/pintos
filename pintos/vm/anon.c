@@ -14,7 +14,7 @@ static bool anon_swap_out (struct page *page);
 static void anon_destroy (struct page *page);
 static bool anon_copy (struct supplemental_page_table *dst, struct page *src_page);
 static size_t swap_slot_alloc (void);
-static void swap_slot_ref (size_t slot) UNUSED;
+static void swap_slot_ref (size_t slot);
 static void swap_slot_unref (size_t slot);
 
 /* DO NOT MODIFY this struct */
@@ -175,13 +175,9 @@ anon_copy (struct supplemental_page_table *dst, struct page *src_page) {
 		if (!src_page->anon.swapped)
 			return true;
 
-		RETURN_FALSE_IF (!vm_claim_page (src_page->va));
-
-		lock_acquire (&swap_lock);
-		for (int i = 0; i < SWAP_SLOT; i++) {
-			disk_read (swap_disk, src_page->anon.swap_idx * 8 + i, (uint8_t *) dst_page->frame->kva + i * 512);
-		}
-		lock_release (&swap_lock);
+		dst_page->operations = &anon_ops;
+		dst_page->anon = src_page->anon;
+		swap_slot_ref (src_page->anon.swap_idx);
 		return true;
 	}
 
