@@ -71,7 +71,6 @@ anon_swap_in (struct page *page, void *kva) {
 	}
 	anon_page->swapped = false;
 	anon_page->swap_idx = BITMAP_ERROR;
-	pml4_set_page(thread_current()->pml4, page->va, kva, page->writable);
 	
 	return true;
 }
@@ -120,11 +119,11 @@ anon_copy (struct supplemental_page_table *dst, struct page *src_page){
 
 	struct page *dst_page = spt_find_page (dst, src_page->va);
 	if (src_page->anon.swapped){
+		lock_acquire(&swap_lock);
 		for (int i = 0; i < SWAP_SLOT; i++){
-			lock_acquire(&swap_lock);
 			disk_read(swap_disk, src_page->anon.swap_idx * 8 + i, (uint8_t *)dst_page->frame->kva + i * 512);
-			lock_release(&swap_lock);
 		}
+		lock_release(&swap_lock);
 	}else{
 		memcpy(dst_page->frame->kva, src_page->frame->kva, PGSIZE);
 	}

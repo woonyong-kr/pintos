@@ -361,6 +361,7 @@ vm_handle_write_protect_fault (void *addr, bool write) {
 void
 vm_dealloc_page (struct page *page) {
 	destroy (page);
+	vm_destroy_page_frame(page);
 	free (page);
 }
 
@@ -437,9 +438,7 @@ supplemental_page_table_kill (struct supplemental_page_table *spt UNUSED) {
 static void
 spt_page_destroy (struct hash_elem *e, void *aux UNUSED) {
 	struct page *page = hash_entry (e, struct page, hash_elem);
-	destroy (page);
-	vm_destroy_page_frame (page);
-	free (page);
+	vm_dealloc_page(page);
 }
 
 static void

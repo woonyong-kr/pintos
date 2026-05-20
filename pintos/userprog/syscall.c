@@ -582,7 +582,9 @@ size_t*
 mmap(void *addr, size_t length, int writable, int fd, off_t offset){
 	RETURN_NULL_IF(addr == NULL || pg_ofs(addr) || is_kernel_vaddr(addr));
 	RETURN_NULL_IF(offset % PGSIZE != 0);
-	RETURN_NULL_IF(length == 0);
+	RETURN_NULL_IF(length <= 0);
+	void *end = addr + length - 1;
+	RETURN_NULL_IF(is_kernel_vaddr(end));
 
 	struct file* file = thread_current()->fd_table[fd];
 	RETURN_NULL_IF(file == NULL);
