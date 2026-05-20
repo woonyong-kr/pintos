@@ -67,6 +67,7 @@ struct frame {
 	struct page *page;
 	struct list_elem elem;   // frame table에 연결하기 위한 필드
 	struct thread* owner_thread;
+	size_t ref_count;
 };
 
 /* 페이지 연산용 함수 테이블.

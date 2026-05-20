@@ -4,6 +4,7 @@
 #include "devices/disk.h"
 #include "bitmap.h"
 #include "threads/mmu.h"
+#include "threads/thread.h"
 
 /* DO NOT MODIFY BELOW LINE */
 static struct disk *swap_disk;
@@ -111,21 +112,54 @@ anon_destroy (struct page *page) {
 }
 
 static bool
-anon_copy (struct supplemental_page_table *dst, struct page *src_page){
+anon_copy (struct supplemental_page_table *dst, struct page *src_page) {
 	RETURN_FALSE_IF (src_page == NULL);
 
-	RETURN_FALSE_IF(!vm_alloc_page (page_get_type(src_page), src_page->va, src_page->writable));
-	RETURN_FALSE_IF(!vm_claim_page (src_page->va));
+	RETURN_FALSE_IF (!vm_alloc_page (page_get_type (src_page), src_page->va, src_page->writable));
 
 	struct page *dst_page = spt_find_page (dst, src_page->va);
-	if (src_page->anon.swapped){
-		lock_acquire(&swap_lock);
-		for (int i = 0; i < SWAP_SLOT; i++){
-			disk_read(swap_disk, src_page->anon.swap_idx * 8 + i, (uint8_t *)dst_page->frame->kva + i * 512);
+	RETURN_FALSE_IF (dst_page == NULL);
+
+	if (src_page->frame == NULL || src_page->anon.swapped) {
+		if (!src_page->anon.swapped)
+			return true;
+
+		RETURN_FALSE_IF (!vm_claim_page (src_page->va));
+
+		lock_acquire (&swap_lock);
+		for (int i = 0; i < SWAP_SLOT; i++) {
+			disk_read (swap_disk, src_page->anon.swap_idx * 8 + i, (uint8_t *) dst_page->frame->kva + i * 512);
 		}
-		lock_release(&swap_lock);
-	}else{
-		memcpy(dst_page->frame->kva, src_page->frame->kva, PGSIZE);
+		lock_release (&swap_lock);
+		return true;
 	}
+
+	struct frame *frame = src_page->frame;
+	struct thread *curr = thread_current ();
+	RETURN_FALSE_IF (frame == NULL || frame->kva == NULL);
+	RETURN_FALSE_IF (curr == NULL || curr->pml4 == NULL);
+
+	if (src_page->writable && frame->ref_count == 1) {
+		struct thread *owner = frame->owner_thread;
+		RETURN_FALSE_IF (owner == NULL || owner->pml4 == NULL);
+		RETURN_FALSE_IF (!pml4_set_page (owner->pml4, src_page->va,
+		                                 frame->kva, false));
+	}
+
+	if (!pml4_set_page (curr->pml4, dst_page->va, frame->kva, false)) {
+		if (src_page->writable && frame->ref_count == 1) {
+			struct thread *owner = frame->owner_thread;
+			if (owner != NULL && owner->pml4 != NULL)
+				pml4_set_page (owner->pml4, src_page->va,
+				               frame->kva, src_page->writable);
+		}
+		spt_remove_page (dst, dst_page);
+		return false;
+	}
+
+	dst_page->operations = &anon_ops;
+	dst_page->anon = src_page->anon;
+	dst_page->frame = frame;
+	frame->ref_count++;
 	return true;
 }
