@@ -22,11 +22,6 @@ struct file *process_get_file (int fd);
 void process_close_file (int fd);
 
 /* lazy_load_segment()가 page fault 시점에 파일 page를 채우는 데 필요한 정보. */
-struct lazy_load_arg {
-	struct file *file;
-	off_t ofs;
-	size_t page_read_bytes;
-	size_t page_zero_bytes;
-};
+
 
 #endif /* userprog/process.h */

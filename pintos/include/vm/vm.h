@@ -77,6 +77,7 @@ struct page_operations {
 	bool (*swap_in) (struct page *, void *);
 	bool (*swap_out) (struct page *);
 	void (*destroy) (struct page *);
+	bool (*copy) (struct page *dst_page, struct page *src_page);
 	enum vm_type type;
 };
 
@@ -84,6 +85,7 @@ struct page_operations {
 #define swap_out(page) (page)->operations->swap_out (page)
 #define destroy(page) \
 	if ((page)->operations->destroy) (page)->operations->destroy (page)
+#define copy(dst_page, src_page) (src_page)->operations->copy ((dst_page), (src_page))
 
 struct lazy_load_file_arg {
 	struct file *file;
@@ -97,6 +99,13 @@ struct lazy_load_file_arg {
  * 설계는 전적으로 구현자 선택이다. */
 struct supplemental_page_table {
 	struct hash hash_table;
+};
+
+struct lazy_load_arg {
+	struct file *file;
+	off_t ofs;
+	size_t page_read_bytes;
+	size_t page_zero_bytes;
 };
 
 #include "threads/thread.h"

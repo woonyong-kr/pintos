@@ -10,6 +10,7 @@
 static bool file_backed_swap_in (struct page *page, void *kva);
 static bool file_backed_swap_out (struct page *page);
 static void file_backed_destroy (struct page *page);
+static bool file_copy (struct supplemental_page_table *dst, struct page *src_page);
 static bool lazy_load_file (struct page *page, void *aux_);
 static struct lock file_lock;
 
@@ -18,6 +19,7 @@ static const struct page_operations file_ops = {
 	.swap_in = file_backed_swap_in,
 	.swap_out = file_backed_swap_out,
 	.destroy = file_backed_destroy,
+	.copy = file_copy,
 	.type = VM_FILE,
 };
 
@@ -160,4 +162,18 @@ lazy_load_file (struct page *page, void *aux_) {
 	return success;
 }
 
+static bool
+file_copy (struct supplemental_page_table *dst, struct page *src_page){
+	RETURN_FALSE_IF (src_page == NULL);
+	
+	RETURN_FALSE_IF(!vm_alloc_page (page_get_type(src_page), src_page->va, src_page->writable));
+	RETURN_FALSE_IF(!vm_claim_page (src_page->va));
 
+	struct page *dst_page = spt_find_page (dst, src_page->va);
+	if (src_page->file.swapped){
+		RETURN_FALSE_IF (file_read_at(src_page->file.file, src_page->frame->kva, src_page->file.page_read_bytes, src_page->file.ofs) != src_page->file.page_read_bytes);
+	}else{
+		memcpy(dst_page->frame->kva, src_page->frame->kva, PGSIZE);
+	}
+	return true;
+}
