@@ -434,10 +434,13 @@ try_claim_user_addr (const void *addr, bool write, struct intr_frame *f) {
 	if (user_page_accessible (curr, addr, write))
 		return true;
 
-	if (write && user_page_present (curr, addr))
-		return false;
-
 #ifdef VM
+	if (write && user_page_present (curr, addr)) {
+		if (!vm_try_handle_fault (f, (void *) addr, true, write, false))
+			return false;
+		return user_page_accessible (curr, addr, write);
+	}
+
 	void *upage = pg_round_down (addr);
 	struct page *page = spt_find_page (&curr->spt, upage);
 
@@ -457,6 +460,9 @@ try_claim_user_addr (const void *addr, bool write, struct intr_frame *f) {
 			return user_page_accessible (curr, addr, write);
 		}
 	}
+#else
+	if (write && user_page_present (curr, addr))
+		return false;
 #endif
 
 	return false;
