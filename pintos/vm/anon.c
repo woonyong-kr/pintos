@@ -115,13 +115,14 @@ anon_initializer (struct page *page, enum vm_type type, void *kva) {
 static bool
 anon_swap_in (struct page *page, void *kva) {
 	struct anon_page *anon_page = &page->anon;
-	bitmap_flip(disk_bitmap, anon_page->swap_idx);
+	size_t swap_idx = anon_page->swap_idx;
 
 	for (int i = 0; i < SWAP_SLOT; i++){
 		lock_acquire(&swap_lock);
-		disk_read(swap_disk, anon_page->swap_idx * 8 + i, (uint8_t *)kva + i * 512);
+		disk_read(swap_disk, swap_idx * 8 + i, (uint8_t *)kva + i * 512);
 		lock_release(&swap_lock);
 	}
+	swap_slot_unref (swap_idx);
 	anon_page->swapped = false;
 	anon_page->swap_idx = BITMAP_ERROR;
 	
