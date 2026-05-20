@@ -77,7 +77,7 @@ struct page_operations {
 	bool (*swap_in) (struct page *, void *);
 	bool (*swap_out) (struct page *);
 	void (*destroy) (struct page *);
-	bool (*copy) (struct page *dst_page, struct page *src_page);
+	bool (*copy) (struct supplemental_page_table *dst, struct page *src_page);
 	enum vm_type type;
 };
 
@@ -85,7 +85,7 @@ struct page_operations {
 #define swap_out(page) (page)->operations->swap_out (page)
 #define destroy(page) \
 	if ((page)->operations->destroy) (page)->operations->destroy (page)
-#define copy(dst_page, src_page) (src_page)->operations->copy ((dst_page), (src_page))
+#define copy(dst, src_page) (src_page)->operations->copy ((dst), (src_page))
 
 struct lazy_load_file_arg {
 	struct file *file;
