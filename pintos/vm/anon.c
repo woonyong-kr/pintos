@@ -48,6 +48,29 @@ anon_initializer (struct page *page, enum vm_type type, void *kva UNUSED) {
 	return true;
 }
 
+bool
+anon_copy_page (struct page *dst, struct page *src) {
+	RETURN_VALUE_IF (dst == NULL || src == NULL, false);
+	RETURN_VALUE_IF (dst->frame == NULL || dst->frame->kva == NULL, false);
+
+	if (src->frame != NULL && src->frame->kva != NULL) {
+		memcpy (dst->frame->kva, src->frame->kva, PGSIZE);
+		return true;
+	}
+
+	RETURN_VALUE_IF (!src->anon.swapped, false);
+	RETURN_VALUE_IF (swap_disk == NULL || swap_bitmap == NULL, false);
+	RETURN_VALUE_IF (src->anon.swap_slot == SWAP_SLOT_NONE, false);
+
+	lock_acquire (&swap_lock);
+	for (size_t i = 0; i < SECTORS_PER_PAGE; i++) {
+		disk_read (swap_disk, src->anon.swap_slot * SECTORS_PER_PAGE + i,
+		           (uint8_t *) dst->frame->kva + DISK_SECTOR_SIZE * i);
+	}
+	lock_release (&swap_lock);
+	return true;
+}
+
 // swap in
 static bool
 anon_swap_in (struct page *page, void *kva) {

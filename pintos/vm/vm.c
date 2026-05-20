@@ -71,8 +71,8 @@ static bool vm_remap_page (struct page *page, struct frame *frame,
 static bool spt_copy_page (struct supplemental_page_table *dst,
                            struct page *page);
 static bool spt_copy_uninit_page (struct page *page);
-static bool spt_copy_loaded_page (struct supplemental_page_table *dst,
-                                  struct page *page);
+static bool spt_copy_anon_page (struct supplemental_page_table *dst,
+                                struct page *page);
 static bool spt_copy_lazy_aux (struct page *page, void **aux);
 static void spt_free_lazy_aux (void *aux);
 static void vm_destroy_page_frame (struct page *page);
@@ -479,11 +479,26 @@ supplemental_page_table_copy (struct supplemental_page_table *dst,
 
 static bool
 spt_copy_page (struct supplemental_page_table *dst, struct page *page) {
-	RETURN_VALUE_IF (page == NULL, false);
-	RETURN_VALUE_IF (page->operations->type == VM_UNINIT,
-	                 spt_copy_uninit_page (page));
+	enum vm_type page_type;
 
-	return spt_copy_loaded_page (dst, page);
+	RETURN_VALUE_IF (page == NULL, false);
+
+	if (page->operations->type == VM_UNINIT) {
+		page_type = VM_TYPE (page->uninit.type);
+		RETURN_VALUE_IF (page_type == VM_FILE, true);
+		RETURN_VALUE_IF (page_type != VM_ANON, false);
+		return spt_copy_uninit_page (page);
+	}
+
+	page_type = page_get_type (page);
+	switch (page_type) {
+	case VM_ANON:
+		return spt_copy_anon_page (dst, page);
+	case VM_FILE:
+		return true;
+	default:
+		return false;
+	}
 }
 
 static bool
@@ -501,18 +516,20 @@ spt_copy_uninit_page (struct page *page) {
 }
 
 static bool
-spt_copy_loaded_page (struct supplemental_page_table *dst, struct page *page) {
-	enum vm_type page_type = page_get_type (page);
+spt_copy_anon_page (struct supplemental_page_table *dst, struct page *page) {
+	enum vm_type type;
+	struct page *child_page;
 
-	RETURN_VALUE_IF (page->frame == NULL || page->frame->kva == NULL, false);
-	RETURN_VALUE_IF (!vm_alloc_page (page_type, page->va, page->writable), false);
+	RETURN_VALUE_IF (dst == NULL || page == NULL, false);
 
-	struct page *child_page = spt_find_page (dst, page->va);
+	type = page->anon.type;
+	RETURN_VALUE_IF (!vm_alloc_page (type, page->va, page->writable), false);
+
+	child_page = spt_find_page (dst, page->va);
 	RETURN_VALUE_IF (child_page == NULL, false);
 	RETURN_VALUE_IF (!vm_do_claim_page (child_page), false);
 
-	memcpy (child_page->frame->kva, page->frame->kva, PGSIZE);
-	return true;
+	return anon_copy_page (child_page, page);
 }
 
 static bool
