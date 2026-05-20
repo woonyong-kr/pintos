@@ -13,7 +13,8 @@
 #define STACK_MAX ((uintptr_t) 1 << 20) /* 유저 스택 최대 크기: 1MB */
 
 static struct list frame_table;
-static struct lock frame_table_lock;
+static struct lock frame_lock;
+static struct list_elem* clock_ptr;
 
 /* 각 하위 시스템의 초기화 코드를 호출해 가상 메모리 하위 시스템을 초기화한다. */
 void
@@ -26,8 +27,11 @@ vm_init (void) {
 	pagecache_init ();
 #endif
 	register_inspect_intr ();
-	/* 위쪽 줄은 수정하지 말 것. */
-	/* TODO: 여기에 코드를 작성한다. */
+	/* DO NOT MODIFY UPPER LINES. */
+	/* TODO: Your code goes here. */
+	list_init(&frame_table);
+	lock_init(&frame_lock);
+	clock_ptr = NULL;
 }
 
 /* 페이지 타입을 얻는다. 아직 초기화되지 않은 페이지가 실제로 어떤 타입으로
@@ -81,6 +85,11 @@ static struct spt_entry *
 spt_entry_from_page (struct page *page) {
 	return (struct spt_entry *) ((char *) page - offsetof (struct spt_entry, page));
 }
+
+static void
+vm_destroy_page_frame (struct page *page);
+static void
+spt_entry_destroy (struct hash_elem *e, void *aux UNUSED);
 
 static uint64_t
 spt_entry_hash (const struct hash_elem *e, void *aux UNUSED) {
@@ -180,29 +189,29 @@ spt_remove_page (struct supplemental_page_table *spt, struct page *page) {
 static struct frame *
 vm_get_victim (void) {
 	struct frame *victim = NULL;
-	size_t frame_count;
+	/* TODO: 교체 정책은 직접 정한다. */
+	//clock algorithm
+	if (clock_ptr == NULL)
+		clock_ptr = list_begin(&frame_table);
 
-	lock_acquire (&frame_table_lock);
+	while (true){
+		if (clock_ptr == list_end(&frame_table)) {
+            clock_ptr = list_begin(&frame_table);
+            continue;
+        }
 
-	frame_count = list_size (&frame_table) * 2;
-	while (frame_count-- > 0) {
-		struct list_elem *e = list_pop_front (&frame_table);
-		list_push_back (&frame_table, e);
+        struct frame *clock_frame = list_entry(clock_ptr, struct frame, elem);
+        bool accessed = pml4_is_accessed(clock_frame->owner_thread->pml4, clock_frame->page->va);
 
-		struct frame *frame = list_entry (e, struct frame, frame_elem);
-		if (frame->owner == NULL || frame->owner->pml4 == NULL ||
-		    frame->page == NULL)
-			continue;
+        if (!accessed) {
+            clock_ptr = list_next(clock_ptr);
+            return clock_frame;
+        }
 
-		if (pml4_is_accessed (frame->owner->pml4, frame->page->va)) {
-			pml4_set_accessed (frame->owner->pml4, frame->page->va, false);
-			continue;
-		}
-
-		victim = frame;
-		break;
-	}
-	lock_release (&frame_table_lock);
+        pml4_set_accessed(clock_frame->owner_thread->pml4, clock_frame->page->va, false);
+        
+        clock_ptr = list_next(clock_ptr);
+    }
 
 	return victim;
 }
@@ -212,17 +221,12 @@ vm_get_victim (void) {
 static struct frame *
 vm_evict_frame (void) {
 	struct frame *victim = vm_get_victim ();
-	RETURN_VALUE_IF (victim == NULL || victim->page == NULL, NULL);
-
-	struct page *page = victim->page;
-	RETURN_VALUE_IF (!swap_out (page), NULL);
-
-	if (victim->owner != NULL && victim->owner->pml4 != NULL)
-		pml4_clear_page (victim->owner->pml4, page->va);
-
-	page->frame = NULL;
+	/* TODO: swap out the victim and return the evicted frame. */
+	if (!swap_out(victim->page))
+		return NULL;
+	victim->owner_thread = NULL;
+	victim->page->frame = NULL;
 	victim->page = NULL;
-	victim->owner = NULL;
 	return victim;
 }
 
@@ -231,22 +235,25 @@ vm_evict_frame (void) {
  * 풀 메모리가 가득 차면 프레임을 교체해 사용 가능한 메모리 공간을 확보한다. */
 static struct frame *
 vm_get_frame (void) {
-	struct frame *frame = malloc (sizeof *frame);
-	RETURN_VALUE_IF (frame == NULL, NULL);
+	void* kva = palloc_get_page (PAL_USER);
 
-	frame->kva = palloc_get_page (PAL_USER);
-	if (frame->kva == NULL) {
-		free (frame);
-		frame = vm_evict_frame ();
-		RETURN_VALUE_IF (frame == NULL, NULL);
-	} else {
-		lock_acquire (&frame_table_lock);
-		list_push_back (&frame_table, &frame->frame_elem);
-		lock_release (&frame_table_lock);
+	if(kva == NULL) 
+		return vm_evict_frame ();
+
+	struct frame *frame = malloc(sizeof* frame);
+	if (frame == NULL){
+		palloc_free_page(kva);
+		return NULL;
 	}
+	
+	frame->kva = kva;
 	frame->page = NULL;
-	frame->owner = NULL;
-	frame->ref_count = 1;
+	frame->owner_thread = thread_current();
+
+	lock_acquire(&frame_lock);
+	list_push_back(&frame_table, &frame->elem);
+	lock_release(&frame_lock);
+
 	return frame;
 }
 
@@ -264,7 +271,7 @@ vm_stack_growth (void *addr UNUSED) {
 		stack_bottom -= PGSIZE;
 
 		RETURN_IF (!vm_alloc_page (VM_ANON | VM_MARKER_0, stack_bottom, true));
-		RETURN_IF (!vm_claim_page (stack_bottom));
+		// RETURN_IF (!vm_claim_page (stack_bottom)); claim 2번 들어감
 
 		curr->stack_bottom = stack_bottom;
 	}
@@ -436,7 +443,7 @@ vm_do_claim_page (struct page *page) {
 	struct frame *frame = vm_get_frame ();
 	RETURN_VALUE_IF (page == NULL || frame == NULL || curr == NULL, false);
 
-	// page와 frame 연결
+	frame->owner_thread = curr;
 	frame->page = page;
 	frame->owner = curr;
 	page->frame = frame;
@@ -466,7 +473,31 @@ supplemental_page_table_copy (struct supplemental_page_table *dst,
                               struct supplemental_page_table *src) {
 	struct hash_iterator i;
 
-	RETURN_VALUE_IF (dst == NULL || src == NULL, false);
+  struct hash_iterator i;
+  hash_first (&i, &src->hash_table);
+  while (hash_next (&i))
+    {
+      struct page *f = hash_entry (hash_cur (&i), struct page, hash_elem);
+      enum vm_type page_type = VM_TYPE (f->operations->type);
+      if (page_type == VM_UNINIT)
+        {
+          void *aux = f->uninit.aux;
+          if (aux)
+            {
+              struct lazy_load_arg *temp_aux
+                  = (struct lazy_load_arg *)malloc (sizeof (struct lazy_load_arg));
+              memcpy (temp_aux, f->uninit.aux, sizeof (struct lazy_load_arg));
+              if (temp_aux->file)
+                {
+                  temp_aux->file = file_reopen (temp_aux->file);
+                  if (temp_aux->file == NULL)
+                    {
+                      free (temp_aux);
+                      return false;
+                    }
+                }
+              aux = temp_aux;
+            }
 
 	hash_first (&i, &src->pages);
 	while (hash_next (&i)) {
@@ -592,6 +623,38 @@ vm_destroy_page_frame (struct page *page) {
 // SPT 정리
 void
 supplemental_page_table_kill (struct supplemental_page_table *spt UNUSED) {
+	/* TODO: Destroy all the supplemental_page_table hold by thread and
+	 * TODO: writeback all the modified contents to the storage. */
 	RETURN_IF (spt == NULL);
-	hash_destroy (&spt->pages, spt_entry_destroy);
+	hash_destroy(&spt->hash_table, spt_entry_destroy);
+}
+
+static void
+spt_entry_destroy (struct hash_elem *e, void *aux UNUSED) {
+	struct page *page = hash_entry (e, struct page, hash_elem);
+	destroy (page);
+	vm_destroy_page_frame (page);
+	free (page);
+}
+
+static void
+vm_destroy_page_frame (struct page *page) {
+	RETURN_IF (page == NULL || page->frame == NULL);
+
+	struct frame *frame = page->frame;
+
+	lock_acquire (&frame_lock);
+	if (clock_ptr == &frame->elem)
+		clock_ptr = list_next(&frame_table);
+	list_remove (&frame->elem);
+	lock_release (&frame_lock);
+
+	if (frame->kva != NULL)
+		palloc_free_page (frame->kva);
+
+	pml4_clear_page(frame->owner_thread->pml4, page->va);
+	frame->page = NULL;
+	frame->owner_thread = NULL;
+	free (frame);
+	
 }

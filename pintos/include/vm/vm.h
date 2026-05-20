@@ -59,8 +59,9 @@ struct page {
 	struct frame *frame; /* 프레임에서 page로 되돌아오는 참조 */
 	bool writable;       /* 유저 페이지 쓰기 가능 여부 */
 
-	/* 구현부 */
-
+	struct hash_elem hash_elem;
+	bool writable;
+	
 	/* 타입별 데이터는 union에 묶여 있다.
 	 * 각 함수는 현재 어떤 union 멤버를 써야 하는지 자동으로 판단한다. */
 	union {
@@ -83,9 +84,8 @@ struct spt_entry {
 struct frame {
 	void *kva;
 	struct page *page;
-	struct thread *owner;
-	struct list_elem frame_elem;
-	size_t ref_count;
+	struct list_elem elem;   // frame table에 연결하기 위한 필드
+	struct thread* owner_thread;
 };
 
 /* 페이지 연산용 함수 테이블.
@@ -104,6 +104,13 @@ struct page_operations {
 #define destroy(page)                \
 	if ((page)->operations->destroy) \
 	(page)->operations->destroy (page)
+
+struct lazy_load_file_arg {
+	struct file *file;
+	off_t ofs;
+	size_t page_read_bytes;
+	size_t page_zero_bytes;
+};
 
 /* 현재 프로세스 메모리 공간의 표현.
  * 이 구조체 설계는 특정 방식으로 강제하지 않는다.

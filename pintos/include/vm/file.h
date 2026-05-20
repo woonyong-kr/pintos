@@ -7,12 +7,11 @@ struct page;
 enum vm_type;
 
 struct file_page {
-	enum vm_type type;
 	struct file *file;
 	off_t ofs;
-	size_t read_bytes;
-	size_t zero_bytes;
-	void *map_start;
+	size_t page_read_bytes;
+	size_t swap_idx;
+	bool swapped;
 };
 
 void vm_file_init (void);

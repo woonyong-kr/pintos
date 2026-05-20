@@ -2,10 +2,8 @@
 
 #include "vm/vm.h"
 #include "devices/disk.h"
-#include "lib/kernel/bitmap.h"
-#include "lib/string.h"
-#include "threads/malloc.h"
-#include "threads/vaddr.h"
+#include "bitmap.h"
+#include "threads/mmu.h"
 
 #define SECTORS_PER_PAGE (PGSIZE / DISK_SECTOR_SIZE)
 #define SWAP_SLOT_NONE   ((size_t) -1)
@@ -26,15 +24,26 @@ static const struct page_operations anon_ops = {
 	.type = VM_ANON,
 };
 
-// 익명 페이지용 swap disk 초기화 (디스크 공간 계산)
+#define SWAP_SLOT 8
+#define SWAP_SLOT_NONE   ((size_t) -1)
+
+static struct bitmap* disk_bitmap;
+static struct lock swap_lock;
+
+/* Initialize the data for anonymous pages */
 void
 vm_anon_init (void) {
-	swap_disk = disk_get (1, 1);
+	/* TODO: Set up the swap_disk. */
+	swap_disk = disk_get(1,1);
+	if (!swap_disk)
+		PANIC("NO DISK");
 
-	ASSERT (swap_disk != NULL);
+	disk_sector_t sectors = disk_size(swap_disk);
 
-	swap_bitmap = bitmap_create (disk_size (swap_disk) / SECTORS_PER_PAGE);
-	lock_init (&swap_lock);
+	disk_bitmap = bitmap_create(sectors / SWAP_SLOT);
+	if (!disk_bitmap)
+		PANIC("NO DISK BITMAP");
+	lock_init(&swap_lock);
 }
 
 // 익명 페이지 초기화
@@ -48,94 +57,58 @@ anon_initializer (struct page *page, enum vm_type type, void *kva UNUSED) {
 	return true;
 }
 
-bool
-anon_copy_page (struct page *dst, struct page *src) {
-	RETURN_VALUE_IF (dst == NULL || src == NULL, false);
-	RETURN_VALUE_IF (dst->frame == NULL || dst->frame->kva == NULL, false);
+	struct anon_page *anon_page = &page->anon;
+	anon_page->swap_idx = BITMAP_ERROR;
+	anon_page->swapped = false;
 
-	if (src->frame != NULL && src->frame->kva != NULL) {
-		memcpy (dst->frame->kva, src->frame->kva, PGSIZE);
-		return true;
-	}
-
-	RETURN_VALUE_IF (!src->anon.swapped, false);
-	RETURN_VALUE_IF (swap_disk == NULL || swap_bitmap == NULL, false);
-	RETURN_VALUE_IF (src->anon.swap_slot == SWAP_SLOT_NONE, false);
-
-	lock_acquire (&swap_lock);
-	for (size_t i = 0; i < SECTORS_PER_PAGE; i++) {
-		disk_read (swap_disk, src->anon.swap_slot * SECTORS_PER_PAGE + i,
-		           (uint8_t *) dst->frame->kva + DISK_SECTOR_SIZE * i);
-	}
-	lock_release (&swap_lock);
 	return true;
 }
 
-// swap in
+/* Swap in the page by read contents from the swap disk. */
 static bool
 anon_swap_in (struct page *page, void *kva) {
-	RETURN_VALUE_IF (page == NULL || kva == NULL, false);
+	struct anon_page *anon_page = &page->anon;
+	bitmap_flip(disk_bitmap, anon_page->swap_idx);
 
-	if (page->anon.swapped) {
-		RETURN_VALUE_IF (swap_disk == NULL || swap_bitmap == NULL, false);
-		RETURN_VALUE_IF (page->anon.swap_slot == SWAP_SLOT_NONE, false);
-
-		lock_acquire (&swap_lock);
-		size_t i = 0;
-		while (i < SECTORS_PER_PAGE) {
-			disk_read (swap_disk, page->anon.swap_slot * SECTORS_PER_PAGE + i,
-			           (uint8_t *) kva + DISK_SECTOR_SIZE * i);
-			i++;
-		}
-		bitmap_set (swap_bitmap, page->anon.swap_slot, false);
-		page->anon.swapped = false;
-		page->anon.swap_slot = SWAP_SLOT_NONE;
-		lock_release (&swap_lock);
-	} else {
-		memset (kva, 0, PGSIZE);
+	for (int i = 0; i < SWAP_SLOT; i++){
+		disk_read(swap_disk, anon_page->swap_idx * 8 + i, (uint8_t *)kva + i * 512);
 	}
+	anon_page->swapped = false;
+	anon_page->swap_idx = BITMAP_ERROR;
+	pml4_set_page(thread_current()->pml4, page->va, kva, page->writable);
+	
 	return true;
 }
 
-// swap out
+/* Swap out the page by writing contents to the swap disk. */
 static bool
 anon_swap_out (struct page *page) {
-	RETURN_VALUE_IF (page == NULL, false);
-	RETURN_VALUE_IF (page->frame == NULL || page->frame->kva == NULL, false);
-	RETURN_VALUE_IF (page->anon.swapped, false);
-	RETURN_VALUE_IF (swap_disk == NULL || swap_bitmap == NULL, false);
-
-	lock_acquire (&swap_lock);
-	size_t slot = bitmap_scan_and_flip (swap_bitmap, 0, 1, false);
-	if (slot == BITMAP_ERROR) {
-		lock_release (&swap_lock);
+	struct anon_page *anon_page = &page->anon;
+	anon_page->swap_idx = bitmap_scan_and_flip(disk_bitmap, 0, 1, false);
+	if (anon_page->swap_idx == BITMAP_ERROR)
 		return false;
-	}
-	size_t i = 0;
-	while (i < SECTORS_PER_PAGE) {
-		disk_write (swap_disk, slot * SECTORS_PER_PAGE + i,
-		            (uint8_t *) page->frame->kva + DISK_SECTOR_SIZE * i);
-		i++;
+	for (int i = 0; i < SWAP_SLOT; i++){
+		disk_write(swap_disk, anon_page->swap_idx * 8 + i, (uint8_t *)page->frame->kva + i * 512);
 	}
 	page->anon.swapped = true;
-	page->anon.swap_slot = slot;
-	lock_release (&swap_lock);
-
+	pml4_clear_page(page->frame->owner_thread->pml4, page->va);
 	return true;
 }
 
+/* Destroy the anonymous page. PAGE will be freed by the caller. */
 // destroy
 static void
 anon_destroy (struct page *page) {
 	RETURN_IF (page == NULL);
 
 	if (page->anon.swapped) {
-		RETURN_IF (swap_bitmap == NULL || page->anon.swap_slot == SWAP_SLOT_NONE);
+		RETURN_IF (disk_bitmap == NULL);
 
 		lock_acquire (&swap_lock);
-		bitmap_set (swap_bitmap, page->anon.swap_slot, false);
+		bitmap_set (disk_bitmap, page->anon.swap_idx, false);
 		page->anon.swapped = false;
-		page->anon.swap_slot = SWAP_SLOT_NONE;
+		page->anon.swap_idx = SWAP_SLOT_NONE;
 		lock_release (&swap_lock);
 	}
+
 }

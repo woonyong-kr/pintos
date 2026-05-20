@@ -18,8 +18,8 @@
 	do { if (CONDITION) return; } while (0)
 #define RETURN_VALUE_IF(CONDITION, VALUE) \
 	do { if (CONDITION) return (VALUE); } while (0)
-#define GOTO_IF(CONDITION, LABEL) \
-	do { if (CONDITION) goto LABEL; } while (0)
+#define RETURN_NULL_IF(CONDITION) \
+	do { if (CONDITION) return NULL; } while (0)
 
 void debug_panic (const char *file, int line, const char *function,
 		const char *message, ...) PRINTF_FORMAT (4, 5) NO_RETURN;

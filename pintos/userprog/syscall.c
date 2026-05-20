@@ -41,10 +41,9 @@ void seek (int fd, unsigned position);
 unsigned tell (int fd);
 int filesize (int fd);
 void check_address (const void *addr);
-#ifdef VM
-void *mmap (void *addr, size_t length, int writable, int fd, off_t offset);
+size_t* mmap(void *addr, size_t length, int writable, int fd, off_t offset);
 void munmap (void *addr);
-#endif
+static bool user_page_present (struct thread *curr, const void *addr);
 static bool user_page_accessible (struct thread *curr, const void *addr,
                                   bool write);
 static bool try_claim_user_addr (const void *addr, bool write,
@@ -157,15 +156,13 @@ syscall_handler (struct intr_frame *f) {
 	case SYS_TELL:
 		f->R.rax = tell (f->R.rdi);
 		break;
-#ifdef VM
 	case SYS_MMAP:
-		f->R.rax = (uint64_t) mmap ((void *) f->R.rdi, f->R.rsi, f->R.rdx,
-		                            f->R.r10, f->R.r8);
+		f->R.rax = mmap(f->R.rdi, f->R.rsi, f->R.rdx,
+		                f->R.r10, f->R.r8);
 		break;
 	case SYS_MUNMAP:
-		munmap ((void *) f->R.rdi);
+		munmap(f->R.rdi);
 		break;
-#endif
 	default:
 		break;
 	}
@@ -579,4 +576,22 @@ copy_in_string (const char *str, struct intr_frame *f) {
 
 	memcpy (kernel, str, len + 1);
 	return kernel;
+}
+
+size_t*
+mmap(void *addr, size_t length, int writable, int fd, off_t offset){
+	RETURN_NULL_IF(addr == NULL || pg_ofs(addr) || is_kernel_vaddr(addr));
+	RETURN_NULL_IF(offset % PGSIZE != 0);
+	RETURN_NULL_IF(length == 0);
+
+	struct file* file = thread_current()->fd_table[fd];
+	RETURN_NULL_IF(file == NULL);
+
+	return do_mmap(addr, length, writable, file, offset);
+}
+
+void 
+munmap (void *addr){
+	RETURN_IF(addr == NULL);
+	return do_munmap(addr);
 }
