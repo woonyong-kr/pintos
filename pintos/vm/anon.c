@@ -3,6 +3,7 @@
 #include "vm/vm.h"
 #include "devices/disk.h"
 #include "bitmap.h"
+#include "threads/malloc.h"
 #include "threads/mmu.h"
 #include "threads/thread.h"
 
@@ -12,6 +13,9 @@ static bool anon_swap_in (struct page *page, void *kva);
 static bool anon_swap_out (struct page *page);
 static void anon_destroy (struct page *page);
 static bool anon_copy (struct supplemental_page_table *dst, struct page *src_page);
+static size_t swap_slot_alloc (void);
+static void swap_slot_ref (size_t slot) UNUSED;
+static void swap_slot_unref (size_t slot);
 
 /* DO NOT MODIFY this struct */
 static const struct page_operations anon_ops = {
@@ -26,6 +30,8 @@ static const struct page_operations anon_ops = {
 #define SWAP_SLOT_NONE   ((size_t) -1)
 
 static struct bitmap* disk_bitmap;
+static size_t *swap_ref_count;
+static size_t swap_slot_count;
 static struct lock swap_lock;
 
 /* Initialize the data for anonymous pages */
@@ -38,10 +44,56 @@ vm_anon_init (void) {
 
 	disk_sector_t sectors = disk_size(swap_disk);
 
-	disk_bitmap = bitmap_create(sectors / SWAP_SLOT);
+	swap_slot_count = sectors / SWAP_SLOT;
+	disk_bitmap = bitmap_create(swap_slot_count);
 	if (!disk_bitmap)
 		PANIC("NO DISK BITMAP");
+	swap_ref_count = malloc (sizeof *swap_ref_count * swap_slot_count);
+	if (swap_ref_count == NULL)
+		PANIC("NO SWAP REF COUNT");
+	for (size_t i = 0; i < swap_slot_count; i++)
+		swap_ref_count[i] = 0;
 	lock_init(&swap_lock);
+}
+
+static size_t
+swap_slot_alloc (void) {
+	size_t slot;
+
+	lock_acquire (&swap_lock);
+	slot = bitmap_scan_and_flip(disk_bitmap, 0, 1, false);
+	if (slot != BITMAP_ERROR)
+		swap_ref_count[slot] = 1;
+	lock_release (&swap_lock);
+
+	return slot;
+}
+
+static void
+swap_slot_ref (size_t slot) {
+	ASSERT (slot != BITMAP_ERROR);
+	ASSERT (slot < swap_slot_count);
+
+	lock_acquire (&swap_lock);
+	ASSERT (bitmap_test (disk_bitmap, slot));
+	ASSERT (swap_ref_count[slot] > 0);
+	swap_ref_count[slot]++;
+	lock_release (&swap_lock);
+}
+
+static void
+swap_slot_unref (size_t slot) {
+	ASSERT (slot != BITMAP_ERROR);
+	ASSERT (slot < swap_slot_count);
+
+	lock_acquire (&swap_lock);
+	ASSERT (bitmap_test (disk_bitmap, slot));
+	ASSERT (swap_ref_count[slot] > 0);
+
+	swap_ref_count[slot]--;
+	if (swap_ref_count[slot] == 0)
+		bitmap_set (disk_bitmap, slot, false);
+	lock_release (&swap_lock);
 }
 
 /* Initialize the file mapping */
@@ -80,7 +132,7 @@ anon_swap_in (struct page *page, void *kva) {
 static bool
 anon_swap_out (struct page *page) {
 	struct anon_page *anon_page = &page->anon;
-	anon_page->swap_idx = bitmap_scan_and_flip(disk_bitmap, 0, 1, false);
+	anon_page->swap_idx = swap_slot_alloc ();
 	if (anon_page->swap_idx == BITMAP_ERROR)
 		return false;
 	for (int i = 0; i < SWAP_SLOT; i++){
@@ -102,11 +154,9 @@ anon_destroy (struct page *page) {
 	if (page->anon.swapped) {
 		RETURN_IF (disk_bitmap == NULL);
 
-		lock_acquire (&swap_lock);
-		bitmap_set (disk_bitmap, page->anon.swap_idx, false);
+		swap_slot_unref (page->anon.swap_idx);
 		page->anon.swapped = false;
 		page->anon.swap_idx = SWAP_SLOT_NONE;
-		lock_release (&swap_lock);
 	}
 
 }
