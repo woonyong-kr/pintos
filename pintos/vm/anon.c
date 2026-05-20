@@ -103,5 +103,4 @@ anon_destroy (struct page *page) {
 		lock_release (&swap_lock);
 	}
 
-
 }

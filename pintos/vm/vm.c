@@ -206,6 +206,7 @@ vm_evict_frame (void) {
 	if (!swap_out(victim->page))
 		return NULL;
 	victim->owner_thread = NULL;
+	victim->page->frame = NULL;
 	victim->page = NULL;
 	return victim;
 }
@@ -489,13 +490,12 @@ vm_destroy_page_frame (struct page *page) {
 	list_remove (&frame->elem);
 	lock_release (&frame_lock);
 
-	if (frame != NULL) {
-		if (frame->kva != NULL)
-			palloc_free_page (frame->kva);
+	if (frame->kva != NULL)
+		palloc_free_page (frame->kva);
 
-		frame->page = NULL;
-		frame->owner_thread = NULL;
-		frame = NULL;
-		free (frame);
-	}
+	pml4_clear_page(frame->owner_thread->pml4, page->va);
+	frame->page = NULL;
+	frame->owner_thread = NULL;
+	free (frame);
+	
 }

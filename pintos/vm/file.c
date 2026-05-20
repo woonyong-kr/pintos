@@ -66,9 +66,8 @@ file_backed_destroy (struct page *page) {
 	struct file_page *file_page = &page->file;
 	if (page->frame != NULL){
 		if (pml4_is_dirty(page->frame->owner_thread->pml4, page->va)) {
-		file_write_at(file_page->file, page->frame->kva, file_page->page_read_bytes, file_page->ofs);
-	}
-		pml4_clear_page(page->frame->owner_thread->pml4, page->va);
+			file_write_at(file_page->file, page->frame->kva, file_page->page_read_bytes, file_page->ofs);
+		}
 	}
 }
 
