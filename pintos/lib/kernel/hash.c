@@ -1,28 +1,29 @@
-/* 해시 테이블.
+/* Hash table.
 
-   이 자료구조는 프로젝트 3용 핀토스 투어 문서에 자세히 설명되어 있다.
+   This data structure is thoroughly documented in the Tour of
+   Pintos for Project 3.
 
-   기본 정보는 hash.h를 참고하라. */
+   See hash.h for basic information. */
 
 #include "hash.h"
 #include "../debug.h"
 #include "threads/malloc.h"
 
-#define list_elem_to_hash_elem(LIST_ELEM) \
-	list_entry (LIST_ELEM, struct hash_elem, list_elem)
+#define list_elem_to_hash_elem(LIST_ELEM)                       \
+	list_entry(LIST_ELEM, struct hash_elem, list_elem)
 
 static struct list *find_bucket (struct hash *, struct hash_elem *);
 static struct hash_elem *find_elem (struct hash *, struct list *,
-                                    struct hash_elem *);
+		struct hash_elem *);
 static void insert_elem (struct hash *, struct list *, struct hash_elem *);
 static void remove_elem (struct hash *, struct hash_elem *);
 static void rehash (struct hash *);
 
-/* 보조 데이터 AUX가 주어졌을 때 HASH로 해시 값을 계산하고 LESS로 해시 원소를
-   비교하도록 해시 테이블 H를 초기화한다. */
+/* Initializes hash table H to compute hash values using HASH and
+   compare hash elements using LESS, given auxiliary data AUX. */
 bool
 hash_init (struct hash *h,
-           hash_hash_func *hash, hash_less_func *less, void *aux) {
+		hash_hash_func *hash, hash_less_func *less, void *aux) {
 	h->elem_cnt = 0;
 	h->bucket_cnt = 4;
 	h->buckets = malloc (sizeof *h->buckets * h->bucket_cnt);
@@ -37,14 +38,15 @@ hash_init (struct hash *h,
 		return false;
 }
 
-/* H에서 모든 원소를 제거한다.
+/* Removes all the elements from H.
 
-   DESTRUCTOR가 null이 아니면 해시 안의 각 원소마다 호출한다. 필요하다면
-   DESTRUCTOR에서 해시 원소가 사용하던 메모리를 해제할 수 있다. 그러나
-   hash_clear() 실행 중 hash_clear(), hash_destroy(), hash_insert(),
-   hash_replace(), hash_delete() 중 어떤 함수를 사용해서든 해시 테이블 H를
-   수정하면, 그 수정이 DESTRUCTOR 안에서 일어나든 다른 곳에서 일어나든 동작은
-   정의되지 않는다. */
+   If DESTRUCTOR is non-null, then it is called for each element
+   in the hash.  DESTRUCTOR may, if appropriate, deallocate the
+   memory used by the hash element.  However, modifying hash
+   table H while hash_clear() is running, using any of the
+   functions hash_clear(), hash_destroy(), hash_insert(),
+   hash_replace(), or hash_delete(), yields undefined behavior,
+   whether done in DESTRUCTOR or elsewhere. */
 void
 hash_clear (struct hash *h, hash_action_func *destructor) {
 	size_t i;
@@ -65,14 +67,16 @@ hash_clear (struct hash *h, hash_action_func *destructor) {
 	h->elem_cnt = 0;
 }
 
-/* 해시 테이블 H를 파괴한다.
+/* Destroys hash table H.
 
-   DESTRUCTOR가 null이 아니면 먼저 해시 안의 각 원소마다 호출한다. 필요하다면
-   DESTRUCTOR에서 해시 원소가 사용하던 메모리를 해제할 수 있다. 그러나
-   hash_clear() 실행 중 hash_clear(), hash_destroy(), hash_insert(),
-   hash_replace(), hash_delete() 중 어떤 함수를 사용해서든 해시 테이블 H를
-   수정하면, 그 수정이 DESTRUCTOR 안에서 일어나든 다른 곳에서 일어나든 동작은
-   정의되지 않는다. */
+   If DESTRUCTOR is non-null, then it is first called for each
+   element in the hash.  DESTRUCTOR may, if appropriate,
+   deallocate the memory used by the hash element.  However,
+   modifying hash table H while hash_clear() is running, using
+   any of the functions hash_clear(), hash_destroy(),
+   hash_insert(), hash_replace(), or hash_delete(), yields
+   undefined behavior, whether done in DESTRUCTOR or
+   elsewhere. */
 void
 hash_destroy (struct hash *h, hash_action_func *destructor) {
 	if (destructor != NULL)
@@ -80,9 +84,10 @@ hash_destroy (struct hash *h, hash_action_func *destructor) {
 	free (h->buckets);
 }
 
-/* NEW와 같은 원소가 테이블에 아직 없으면 NEW를 해시 테이블 H에 삽입하고
-   null 포인터를 반환한다. 같은 원소가 이미 있으면 NEW를 삽입하지 않고
-   기존 원소를 반환한다. */
+/* Inserts NEW into hash table H and returns a null pointer, if
+   no equal element is already in the table.
+   If an equal element is already in the table, returns it
+   without inserting NEW. */
 struct hash_elem *
 hash_insert (struct hash *h, struct hash_elem *new) {
 	struct list *bucket = find_bucket (h, new);
@@ -96,8 +101,8 @@ hash_insert (struct hash *h, struct hash_elem *new) {
 	return old;
 }
 
-/* NEW를 해시 테이블 H에 삽입한다. 같은 원소가 이미 있으면 그 원소를 NEW로
-   교체하고 기존 원소를 반환한다. */
+/* Inserts NEW into hash table H, replacing any equal element
+   already in the table, which is returned. */
 struct hash_elem *
 hash_replace (struct hash *h, struct hash_elem *new) {
 	struct list *bucket = find_bucket (h, new);
@@ -112,18 +117,20 @@ hash_replace (struct hash *h, struct hash_elem *new) {
 	return old;
 }
 
-/* 해시 테이블 H에서 E와 같은 원소를 찾아 반환한다. 같은 원소가 없으면
-   null 포인터를 반환한다. */
+/* Finds and returns an element equal to E in hash table H, or a
+   null pointer if no equal element exists in the table. */
 struct hash_elem *
 hash_find (struct hash *h, struct hash_elem *e) {
 	return find_elem (h, find_bucket (h, e), e);
 }
 
-/* 해시 테이블 H에서 E와 같은 원소를 찾아 제거한 뒤 반환한다. 같은 원소가
-   없으면 null 포인터를 반환한다.
+/* Finds, removes, and returns an element equal to E in hash
+   table H.  Returns a null pointer if no equal element existed
+   in the table.
 
-   해시 테이블의 원소가 동적 할당되었거나 동적 자원을 소유한다면, 그 자원을
-   해제할 책임은 호출자에게 있다. */
+   If the elements of the hash table are dynamically allocated,
+   or own resources that are, then it is the caller's
+   responsibility to deallocate them. */
 struct hash_elem *
 hash_delete (struct hash *h, struct hash_elem *e) {
 	struct hash_elem *found = find_elem (h, find_bucket (h, e), e);
@@ -134,11 +141,12 @@ hash_delete (struct hash *h, struct hash_elem *e) {
 	return found;
 }
 
-/* 해시 테이블 H의 각 원소에 대해 임의의 순서로 ACTION을 호출한다.
-   hash_apply() 실행 중 hash_clear(), hash_destroy(), hash_insert(),
-   hash_replace(), hash_delete() 중 어떤 함수를 사용해서든 해시 테이블 H를
-   수정하면, 그 수정이 ACTION 안에서 일어나든 다른 곳에서 일어나든 동작은
-   정의되지 않는다. */
+/* Calls ACTION for each element in hash table H in arbitrary
+   order.
+   Modifying hash table H while hash_apply() is running, using
+   any of the functions hash_clear(), hash_destroy(),
+   hash_insert(), hash_replace(), or hash_delete(), yields
+   undefined behavior, whether done from ACTION or elsewhere. */
 void
 hash_apply (struct hash *h, hash_action_func *action) {
 	size_t i;
@@ -156,9 +164,9 @@ hash_apply (struct hash *h, hash_action_func *action) {
 	}
 }
 
-/* 해시 테이블 H를 순회하도록 반복자 I를 초기화한다.
+/* Initializes I for iterating hash table H.
 
-   순회 관용구:
+   Iteration idiom:
 
    struct hash_iterator i;
 
@@ -166,12 +174,13 @@ hash_apply (struct hash *h, hash_action_func *action) {
    while (hash_next (&i))
    {
    struct foo *f = hash_entry (hash_cur (&i), struct foo, elem);
-   ...f로 필요한 작업 수행...
+   ...do something with f...
    }
 
-   순회 중 hash_clear(), hash_destroy(), hash_insert(), hash_replace(),
-   hash_delete() 중 어떤 함수를 사용해서든 해시 테이블 H를 수정하면 모든
-   반복자가 무효화된다. */
+   Modifying hash table H during iteration, using any of the
+   functions hash_clear(), hash_destroy(), hash_insert(),
+   hash_replace(), or hash_delete(), invalidates all
+   iterators. */
 void
 hash_first (struct hash_iterator *i, struct hash *h) {
 	ASSERT (i != NULL);
@@ -182,12 +191,14 @@ hash_first (struct hash_iterator *i, struct hash *h) {
 	i->elem = list_elem_to_hash_elem (list_head (i->bucket));
 }
 
-/* I를 해시 테이블의 다음 원소로 이동시키고 그 원소를 반환한다. 남은 원소가
-   없으면 null 포인터를 반환한다. 원소는 임의의 순서로 반환된다.
+/* Advances I to the next element in the hash table and returns
+   it.  Returns a null pointer if no elements are left.  Elements
+   are returned in arbitrary order.
 
-   순회 중 hash_clear(), hash_destroy(), hash_insert(), hash_replace(),
-   hash_delete() 중 어떤 함수를 사용해서든 해시 테이블 H를 수정하면 모든
-   반복자가 무효화된다. */
+   Modifying a hash table H during iteration, using any of the
+   functions hash_clear(), hash_destroy(), hash_insert(),
+   hash_replace(), or hash_delete(), invalidates all
+   iterators. */
 struct hash_elem *
 hash_next (struct hash_iterator *i) {
 	ASSERT (i != NULL);
@@ -204,34 +215,34 @@ hash_next (struct hash_iterator *i) {
 	return i->elem;
 }
 
-/* 해시 테이블 순회에서 현재 원소를 반환한다. 테이블 끝이면 null 포인터를
-   반환한다. hash_first()를 호출한 뒤 hash_next()를 호출하기 전에는 동작이
-   정의되지 않는다. */
+/* Returns the current element in the hash table iteration, or a
+   null pointer at the end of the table.  Undefined behavior
+   after calling hash_first() but before hash_next(). */
 struct hash_elem *
 hash_cur (struct hash_iterator *i) {
 	return i->elem;
 }
 
-/* H 안의 원소 수를 반환한다. */
+/* Returns the number of elements in H. */
 size_t
 hash_size (struct hash *h) {
 	return h->elem_cnt;
 }
 
-/* H에 원소가 없으면 true를, 그렇지 않으면 false를 반환한다. */
+/* Returns true if H contains no elements, false otherwise. */
 bool
 hash_empty (struct hash *h) {
 	return h->elem_cnt == 0;
 }
 
-/* 32비트 워드 크기용 Fowler-Noll-Vo 해시 상수. */
+/* Fowler-Noll-Vo hash constants, for 32-bit word sizes. */
 #define FNV_64_PRIME 0x00000100000001B3UL
 #define FNV_64_BASIS 0xcbf29ce484222325UL
 
-/* BUF에 있는 SIZE 바이트의 해시 값을 반환한다. */
+/* Returns a hash of the SIZE bytes in BUF. */
 uint64_t
 hash_bytes (const void *buf_, size_t size) {
-	/* 바이트용 Fowler-Noll-Vo 32비트 해시. */
+	/* Fowler-Noll-Vo 32-bit hash, for bytes. */
 	const unsigned char *buf = buf_;
 	uint64_t hash;
 
@@ -244,7 +255,7 @@ hash_bytes (const void *buf_, size_t size) {
 	return hash;
 }
 
-/* 문자열 S의 해시 값을 반환한다. */
+/* Returns a hash of string S. */
 uint64_t
 hash_string (const char *s_) {
 	const unsigned char *s = (const unsigned char *) s_;
@@ -259,21 +270,21 @@ hash_string (const char *s_) {
 	return hash;
 }
 
-/* 정수 I의 해시 값을 반환한다. */
+/* Returns a hash of integer I. */
 uint64_t
 hash_int (int i) {
 	return hash_bytes (&i, sizeof i);
 }
 
-/* E가 속해야 할 H 안의 버킷을 반환한다. */
+/* Returns the bucket in H that E belongs in. */
 static struct list *
 find_bucket (struct hash *h, struct hash_elem *e) {
 	size_t bucket_idx = h->hash (e, h->aux) & (h->bucket_cnt - 1);
 	return &h->buckets[bucket_idx];
 }
 
-/* H 안의 BUCKET에서 E와 같은 해시 원소를 찾는다. 찾으면 그 원소를 반환하고,
-   없으면 null 포인터를 반환한다. */
+/* Searches BUCKET in H for a hash element equal to E.  Returns
+   it if found or a null pointer otherwise. */
 static struct hash_elem *
 find_elem (struct hash *h, struct list *bucket, struct hash_elem *e) {
 	struct list_elem *i;
@@ -287,25 +298,27 @@ find_elem (struct hash *h, struct list *bucket, struct hash_elem *e) {
 	return NULL;
 }
 
-/* X에서 가장 낮은 1 비트 하나를 끈 값을 반환한다. */
+/* Returns X with its lowest-order bit set to 1 turned off. */
 static inline size_t
 turn_off_least_1bit (size_t x) {
 	return x & (x - 1);
 }
 
-/* X가 2의 거듭제곱이면 true를, 그렇지 않으면 false를 반환한다. */
+/* Returns true if X is a power of 2, otherwise false. */
 static inline size_t
 is_power_of_2 (size_t x) {
 	return x != 0 && turn_off_least_1bit (x) == 0;
 }
 
-/* 버킷당 원소 수 비율. */
-#define MIN_ELEMS_PER_BUCKET  1 /* 원소/버킷 < 1이면 버킷 수를 줄인다. */
-#define BEST_ELEMS_PER_BUCKET 2 /* 이상적인 원소/버킷 비율. */
-#define MAX_ELEMS_PER_BUCKET  4 /* 원소/버킷 > 4이면 버킷 수를 늘린다. */
+/* Element per bucket ratios. */
+#define MIN_ELEMS_PER_BUCKET  1 /* Elems/bucket < 1: reduce # of buckets. */
+#define BEST_ELEMS_PER_BUCKET 2 /* Ideal elems/bucket. */
+#define MAX_ELEMS_PER_BUCKET  4 /* Elems/bucket > 4: increase # of buckets. */
 
-/* 해시 테이블 H의 버킷 수를 이상적인 값에 맞게 변경한다. 메모리 부족으로
-   실패할 수 있지만, 그 경우 해시 접근 효율이 떨어질 뿐 계속 동작할 수 있다. */
+/* Changes the number of buckets in hash table H to match the
+   ideal.  This function can fail because of an out-of-memory
+   condition, but that'll just make hash accesses less efficient;
+   we can still continue. */
 static void
 rehash (struct hash *h) {
 	size_t old_bucket_cnt, new_bucket_cnt;
@@ -314,46 +327,49 @@ rehash (struct hash *h) {
 
 	ASSERT (h != NULL);
 
-	/* 나중에 쓰기 위해 기존 버킷 정보를 저장한다. */
+	/* Save old bucket info for later use. */
 	old_buckets = h->buckets;
 	old_bucket_cnt = h->bucket_cnt;
 
-	/* 지금 사용할 버킷 수를 계산한다.
-	   BEST_ELEMS_PER_BUCKET개 원소마다 버킷 하나가 있도록 맞춘다.
-	   버킷은 최소 네 개여야 하고, 버킷 수는 2의 거듭제곱이어야 한다. */
+	/* Calculate the number of buckets to use now.
+	   We want one bucket for about every BEST_ELEMS_PER_BUCKET.
+	   We must have at least four buckets, and the number of
+	   buckets must be a power of 2. */
 	new_bucket_cnt = h->elem_cnt / BEST_ELEMS_PER_BUCKET;
 	if (new_bucket_cnt < 4)
 		new_bucket_cnt = 4;
 	while (!is_power_of_2 (new_bucket_cnt))
 		new_bucket_cnt = turn_off_least_1bit (new_bucket_cnt);
 
-	/* 버킷 수가 달라지지 않는다면 아무것도 하지 않는다. */
+	/* Don't do anything if the bucket count wouldn't change. */
 	if (new_bucket_cnt == old_bucket_cnt)
 		return;
 
-	/* 새 버킷을 할당하고 빈 상태로 초기화한다. */
+	/* Allocate new buckets and initialize them as empty. */
 	new_buckets = malloc (sizeof *new_buckets * new_bucket_cnt);
 	if (new_buckets == NULL) {
-		/* 할당에 실패했다. 해시 테이블 사용 효율은 떨어지지만 여전히 사용할 수
-		   있으므로 오류로 볼 필요는 없다. */
+		/* Allocation failed.  This means that use of the hash table will
+		   be less efficient.  However, it is still usable, so
+		   there's no reason for it to be an error. */
 		return;
 	}
 	for (i = 0; i < new_bucket_cnt; i++)
 		list_init (&new_buckets[i]);
 
-	/* 새 버킷 정보를 설치한다. */
+	/* Install new bucket info. */
 	h->buckets = new_buckets;
 	h->bucket_cnt = new_bucket_cnt;
 
-	/* 기존 원소를 각각 알맞은 새 버킷으로 옮긴다. */
+	/* Move each old element into the appropriate new bucket. */
 	for (i = 0; i < old_bucket_cnt; i++) {
 		struct list *old_bucket;
 		struct list_elem *elem, *next;
 
 		old_bucket = &old_buckets[i];
 		for (elem = list_begin (old_bucket);
-		     elem != list_end (old_bucket); elem = next) {
-			struct list *new_bucket = find_bucket (h, list_elem_to_hash_elem (elem));
+				elem != list_end (old_bucket); elem = next) {
+			struct list *new_bucket
+				= find_bucket (h, list_elem_to_hash_elem (elem));
 			next = list_next (elem);
 			list_remove (elem);
 			list_push_front (new_bucket, elem);
@@ -363,16 +379,17 @@ rehash (struct hash *h) {
 	free (old_buckets);
 }
 
-/* E를 해시 테이블 H 안의 BUCKET에 삽입한다. */
+/* Inserts E into BUCKET (in hash table H). */
 static void
 insert_elem (struct hash *h, struct list *bucket, struct hash_elem *e) {
 	h->elem_cnt++;
 	list_push_front (bucket, &e->list_elem);
 }
 
-/* 해시 테이블 H에서 E를 제거한다. */
+/* Removes E from hash table H. */
 static void
 remove_elem (struct hash *h, struct hash_elem *e) {
 	h->elem_cnt--;
 	list_remove (&e->list_elem);
 }
+

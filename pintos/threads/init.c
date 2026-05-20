@@ -71,15 +71,6 @@ int main (void) NO_RETURN;
 
 /*
  * Pintos 메인 프로그램.
- *
- * 여기까지 오기 전에 loader.S가 QEMU/BIOS가 읽어 온 부트 섹터로 실행되고,
- * 디스크의 커널 이미지를 LOADER_PHYS_BASE 물리 주소에 복사했다.
- * 그 뒤 start.S가 64-bit long mode와 임시 페이지 테이블/스택을 만들고
- * 이 main()을 호출했다.
- *
- * 따라서 main() 시작 시점의 실행 단위는 아직 "PintOS 스레드"가 아니다.
- * CPU가 커널 C 코드를 직접 실행 중인 상태이며, thread_init()이 현재
- * 실행 흐름을 initial_thread, 즉 "main" 커널 스레드로 등록한다.
  */
 int
 main (void) {
@@ -100,11 +91,6 @@ main (void) {
 	/*
 	 * 락을 사용할 수 있도록 우리 자신을 스레드로 초기화한 뒤,
 	 * 콘솔 락을 활성화한다.
-	 *
-	 * 이 지점이 부트 로더/CPU 직접 실행 흐름과 PintOS 스레드 세계의 경계다.
-	 * thread_init() 전에는 thread_current()가 안전하지 않다.
-	 * thread_init() 후에는 현재 커널 스택이 struct thread를 가진 "main"
-	 * 스레드로 해석된다.
 	 */
 	thread_init ();
 	console_init ();
@@ -335,10 +321,8 @@ run_actions (char **argv) {
 	static const struct action actions[] = {
 		{ "run", 2, run_task },
 #ifdef FILESYS
-		{ "ls", 1, fsutil_ls },
-		{ "cat", 2, fsutil_cat },
-		{ "rm", 2, fsutil_rm },
-		{ "put", 2, fsutil_put },
+		{ "ls", 1, fsutil_ls },   { "cat", 2, fsutil_cat },
+		{ "rm", 2, fsutil_rm },   { "put", 2, fsutil_put },
 		{ "get", 2, fsutil_get },
 #endif
 		{ NULL, 0, NULL },

@@ -28,7 +28,7 @@ RUN echo "jungle ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/jungle
 USER jungle
 WORKDIR /home/jungle
 
-RUN echo "source /workspaces/SW_AI-W11-pintos/pintos/activate" >> /home/jungle/.bashrc
+RUN echo "source /workspaces/SW_AI-W09-pintos/pintos/activate" >> /home/jungle/.bashrc
 
 # Clone the repository
 # RUN git clone https://github.com/casys-kaist/pintos-kaist /home/jungle/pintos

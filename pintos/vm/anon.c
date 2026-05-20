@@ -4,7 +4,6 @@
 #include "devices/disk.h"
 #include "bitmap.h"
 #include "threads/mmu.h"
-#include <string.h>
 
 /* DO NOT MODIFY BELOW LINE */
 static struct disk *swap_disk;
@@ -49,7 +48,7 @@ bool
 anon_initializer (struct page *page, enum vm_type type, void *kva) {
 	/* Set up the handler */
 	ASSERT(page != NULL);
-
+	
 	page->operations = &anon_ops;
 
 	struct anon_page *anon_page = &page->anon;
@@ -66,12 +65,13 @@ anon_swap_in (struct page *page, void *kva) {
 	bitmap_flip(disk_bitmap, anon_page->swap_idx);
 
 	for (int i = 0; i < SWAP_SLOT; i++){
+		lock_acquire(&swap_lock);
 		disk_read(swap_disk, anon_page->swap_idx * 8 + i, (uint8_t *)kva + i * 512);
+		lock_release(&swap_lock);
 	}
 	anon_page->swapped = false;
 	anon_page->swap_idx = BITMAP_ERROR;
-	pml4_set_page(thread_current()->pml4, page->va, kva, page->writable);
-
+	
 	return true;
 }
 
@@ -83,7 +83,9 @@ anon_swap_out (struct page *page) {
 	if (anon_page->swap_idx == BITMAP_ERROR)
 		return false;
 	for (int i = 0; i < SWAP_SLOT; i++){
+		lock_acquire(&swap_lock);
 		disk_write(swap_disk, anon_page->swap_idx * 8 + i, (uint8_t *)page->frame->kva + i * 512);
+		lock_release(&swap_lock);
 	}
 	page->anon.swapped = true;
 	pml4_clear_page(page->frame->owner_thread->pml4, page->va);
@@ -117,9 +119,11 @@ anon_copy (struct supplemental_page_table *dst, struct page *src_page){
 
 	struct page *dst_page = spt_find_page (dst, src_page->va);
 	if (src_page->anon.swapped){
+		lock_acquire(&swap_lock);
 		for (int i = 0; i < SWAP_SLOT; i++){
 			disk_read(swap_disk, src_page->anon.swap_idx * 8 + i, (uint8_t *)dst_page->frame->kva + i * 512);
 		}
+		lock_release(&swap_lock);
 	}else{
 		memcpy(dst_page->frame->kva, src_page->frame->kva, PGSIZE);
 	}

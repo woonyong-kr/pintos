@@ -40,24 +40,15 @@
 
 #include "threads/loader.h"
 	
-#### 커널 로더.
+#### Kernel loader.
 
-#### 이 코드는 하드 디스크의 첫 번째 섹터에 저장되어 있어야 한다.
-#### PintOS 테스트 환경에서 이 "하드 디스크"는 보통 QEMU가 제공하는 가상
-#### 디스크 이미지다. QEMU는 그 이미지를 IDE 디스크처럼 보이게 만들지만,
-#### 바이트 배치는 일반 부트 디스크와 같다. sector 0에는 이 512바이트 부트
-#### 로더가 들어 있고, 그 뒤 섹터들에는 이 로더가 RAM으로 복사할 커널 이미지가
-#### 들어 있다.
-####
-#### BIOS가 실행되면 이 코드를 물리 주소 0x7c00-0x7e00 범위, 즉 512바이트
-#### 영역에 올린 뒤 그 시작 주소로 점프한다. 이때 CPU는 real mode다.
-#### 이 코드는 전체 메모리에 접근할 수 있도록 protected mode, 즉 32비트
-#### 모드로 전환하고, 커널을 메모리에 올린 뒤 start.S가 링크된 커널의 첫
-#### 바이트로 점프한다.
-####
-#### 이 시점에는 아직 PintOS 스레드가 존재하지 않는다. CPU가 부트 로더
-#### 명령어를 직접 실행하고 있을 뿐이다. PintOS의 첫 스레드는 나중에
-#### init.c:main() -> thread_init() 안에서 만들어진다.
+#### This code should be stored in the first sector of the hard disk.
+#### When the BIOS runs, it loads this code at physical address
+#### 0x7c00-0x7e00 (512 bytes).  Then it jumps to the beginning of it,
+#### in real mode.  This code switches into protected mode (32-bit
+#### mode) so that all of memory can accessed, loads the kernel into
+#### memory, and jumps to the first byte of the kernel, where start.S
+#### is linked.
 	
 /* Flags in control register 0. */
 #define CR0_PE 0x00000001      /* Protection Enable. */
@@ -197,16 +188,8 @@ protcseg:
 	movw %ax, %ss
 	movl $LOADER_PHYS_BASE + 0x30000, %esp
 
-#### IDE 컨트롤러를 직접 조작해서 커널을 물리 주소 LOADER_PHYS_BASE부터
-#### 시작하는 메모리 영역에 적재한다.
-####
-#### %ebx = 다음에 읽을 디스크 섹터 번호.
-####        sector 0은 이 로더 자신이므로 커널은 sector 1에서 시작한다.
-#### %edi = RAM에 복사할 목적지 주소.
-####        아래의 "rep insw"는 에뮬레이션된 IDE 데이터 포트에서 512바이트
-####        디스크 섹터 하나를 메모리로 복사하고, 그만큼 %edi를 자동으로
-####        증가시킨다. 루프가 끝나면 LOADER_PHYS_BASE 위치의 RAM에는
-####        커널 이미지의 시작 부분이 들어 있다.
+#### Load kernel starting at physical address LOADER_PHYS_BASE by
+#### frobbing the IDE controller directly.
 
 	movl $1, %ebx
 	movl $LOADER_PHYS_BASE, %edi
@@ -281,10 +264,7 @@ read_sector:
 	cmpl $KERNEL_LOAD_PAGES*8 + 1, %ebx
 	jnz read_sector
 
-#### 커널 진입점으로 점프한다.
-#### 이것은 스레드 전환이 아니다. 부트 로더에서 RAM에 올라간 커널 이미지의
-#### 첫 바이트로 제어를 넘기는 단순한 점프/호출이다. 링커 스크립트는 이 주소에
-#### start.S의 .entry 코드를 배치해 둔다.
+#### Jump to kernel entry point.
 	movl $LOADER_PHYS_BASE, %eax
 	call *%eax
 	jmp panic

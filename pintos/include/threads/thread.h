@@ -31,10 +31,10 @@ enum thread_status {
 typedef int tid_t;
 
 struct child_status {
-	tid_t tid;       // 자식 스레드 식별자
-	int exit_status; // 자식 종료 코드
-	bool waited;     // 부모가 이미 wait했는지 여부
-	bool exited;     // 자식이 이미 종료했는지 여부
+	tid_t tid;                  // 자식 스레드 식별자
+	int exit_status;            // 자식 종료 코드
+	bool waited;                // 부모가 이미 wait했는지 여부
+	bool exited;                // 자식이 이미 종료했는지 여부
 	bool orphaned;
 	bool fork_success;          // fork 초기화가 성공했는지 여부
 	struct semaphore fork_sema; // fork 초기화 완료 알림용 세마포어

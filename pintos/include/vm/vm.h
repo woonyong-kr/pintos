@@ -32,7 +32,6 @@ enum vm_type {
 #endif
 
 struct page_operations;
-struct supplemental_page_table;
 struct thread;
 
 #define VM_TYPE(type) ((type) & 7)
@@ -68,7 +67,6 @@ struct frame {
 	struct page *page;
 	struct list_elem elem;   // frame table에 연결하기 위한 필드
 	struct thread* owner_thread;
-	size_t ref_count;
 };
 
 /* 페이지 연산용 함수 테이블.

@@ -29,12 +29,6 @@ include ../../devices/targets.mk
 SOURCES = $(foreach dir,$(KERNEL_SUBDIRS),$($(dir)_SRC))
 OBJECTS = $(patsubst %.c,%.o,$(patsubst %.S,%.o,$(SOURCES)))
 DEPENDS = $(patsubst %.o,%.d,$(OBJECTS))
-OBJECT_DIRS = $(sort $(dir $(OBJECTS)))
-
-$(OBJECTS): | $(OBJECT_DIRS)
-
-$(OBJECT_DIRS):
-	mkdir -p $@
 
 threads/kernel.lds.s: CPPFLAGS += -P
 threads/kernel.lds.s: threads/kernel.lds.S

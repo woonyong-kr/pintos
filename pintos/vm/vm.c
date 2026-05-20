@@ -58,11 +58,6 @@ static bool vm_handle_unwritable_spt_page (struct page *page UNUSED);
 static bool vm_should_grow_stack (struct intr_frame *f, void *addr, bool user);
 static bool vm_grow_stack_and_claim (void *addr);
 static bool vm_handle_write_protect_fault (void *addr, bool write);
-static bool vm_handle_wp (struct page *page);
-static bool vm_handle_cow (struct page *page) UNUSED;
-static bool vm_copy_cow_page (struct page *page, struct frame *old_frame) UNUSED;
-static bool vm_remap_page (struct page *page, struct frame *frame,
-                           bool writable) UNUSED;
 
 static void
 vm_destroy_page_frame (struct page *page);
@@ -91,35 +86,35 @@ page_less (const struct hash_elem *a, const struct hash_elem *b,
 bool
 vm_alloc_page_with_initializer (enum vm_type type, void *upage, bool writable,
 		vm_initializer *init, void *aux) {
-
-	ASSERT(pg_ofs(upage) == 0);
+			
+	ASSERT(pg_ofs(upage) == 0);		
 	ASSERT (VM_TYPE(type) != VM_UNINIT);
 
 	struct supplemental_page_table *spt = &thread_current ()->spt;
-
-	if (upage == NULL || spt_find_page (spt, upage) != NULL)
+	
+	if (upage == NULL || spt_find_page (spt, upage) != NULL) 
 		goto err;
-
+		
 		struct page* page = malloc(sizeof *page);
 		if (page == NULL)
 			goto err;
-
+		
 		bool (*initializer)(struct page *page, enum vm_type type, void *kva) = NULL;
 
 		switch (VM_TYPE(type)) {
 			case VM_ANON:
 				initializer = anon_initializer;
 				break;
-
+			
 			case VM_FILE:
 				initializer = file_backed_initializer;
 				break;
-
+			
 			default:
 				free(page);
 				goto err;
 		}
-
+		
 		uninit_new(page, upage, init, type, aux, initializer);
 		page->writable = writable;
 
@@ -127,9 +122,9 @@ vm_alloc_page_with_initializer (enum vm_type type, void *upage, bool writable,
 			free(page);
 			goto err;
 		}
-		else
+		else 
 			return true;
-
+		
 err:
 	return false;
 }
@@ -138,13 +133,13 @@ err:
 /* 페이지 폴트가 발생하면 spt 에서 va로 메타 데이터를 찾는 함수 */
 struct page *
 spt_find_page (struct supplemental_page_table *spt, void *va) {
-
+	
 	RETURN_VALUE_IF (spt == NULL || va == NULL, NULL);
-
-	void * rounded_va = pg_round_down(va);
+	
+	void * rounded_va = pg_round_down(va); 
 	struct page temp;
-	temp.va = rounded_va;
-
+	temp.va = rounded_va; 
+	
 	struct hash_elem * found = hash_find(&spt->hash_table, &temp.hash_elem);
 	RETURN_VALUE_IF (found == NULL, NULL);
 
@@ -158,8 +153,8 @@ spt_insert_page (struct supplemental_page_table *spt,
 		struct page *page) {
 
 	RETURN_VALUE_IF (spt == NULL || page == NULL, false);
-	ASSERT(pg_ofs(page->va) == 0);
-
+	ASSERT(pg_ofs(page->va) == 0);		
+	
 	return hash_insert(&spt->hash_table, &page->hash_elem) == NULL;
 }
 
@@ -195,7 +190,7 @@ vm_get_victim (void) {
         }
 
         pml4_set_accessed(clock_frame->owner_thread->pml4, clock_frame->page->va, false);
-
+        
         clock_ptr = list_next(clock_ptr);
     }
 
@@ -225,13 +220,13 @@ vm_evict_frame (void) {
  * 사용할 수 있는 메모리 공간을 확보한다.
  */
 /* user pool 에서 공간 할당 받아오기
-frame에 올리기 위해 할당받는곳
+frame에 올리기 위해 할당받는곳 
  */
 static struct frame *
 vm_get_frame (void) {
 	void* kva = palloc_get_page (PAL_USER);
 
-	if(kva == NULL)
+	if(kva == NULL) 
 		return vm_evict_frame ();
 
 	struct frame *frame = malloc(sizeof* frame);
@@ -239,11 +234,10 @@ vm_get_frame (void) {
 		palloc_free_page(kva);
 		return NULL;
 	}
-
+	
 	frame->kva = kva;
 	frame->page = NULL;
 	frame->owner_thread = thread_current();
-	frame->ref_count = 1;
 
 	lock_acquire(&frame_lock);
 	list_push_back(&frame_table, &frame->elem);
@@ -274,60 +268,8 @@ vm_stack_growth (void *addr UNUSED) {
 
 /* 쓰기 보호 페이지에서 발생한 폴트를 처리한다. */
 static bool
-vm_handle_wp (struct page *page) {
-	struct thread *curr = thread_current ();
-
-	RETURN_VALUE_IF (page == NULL || curr == NULL || curr->pml4 == NULL, false);
-	RETURN_VALUE_IF (!page->writable, false);
-	RETURN_VALUE_IF (page->frame == NULL || page->frame->kva == NULL, false);
-
-	return vm_handle_cow (page);
-}
-
-static bool
-vm_handle_cow (struct page *page UNUSED) {
-	RETURN_VALUE_IF (page == NULL, false);
-
-	struct frame *old_frame = page->frame;
-
-	RETURN_VALUE_IF (old_frame == NULL || old_frame->kva == NULL, false);
-	RETURN_VALUE_IF (old_frame->ref_count > 1,
-	                 vm_copy_cow_page (page, old_frame));
-
-	return vm_remap_page (page, old_frame, true);
-}
-
-static bool
-vm_copy_cow_page (struct page *page UNUSED, struct frame *old_frame UNUSED) {
-	RETURN_VALUE_IF (page == NULL || old_frame == NULL, false);
-	RETURN_VALUE_IF (old_frame->kva == NULL, false);
-
-	struct frame *new_frame = vm_get_frame ();
-	RETURN_VALUE_IF (new_frame == NULL, false);
-
-	memcpy (new_frame->kva, old_frame->kva, PGSIZE);
-	old_frame->ref_count--;
-
-	return vm_remap_page (page, new_frame, true);
-}
-
-static bool
-vm_remap_page (struct page *page UNUSED, struct frame *frame UNUSED,
-               bool writable UNUSED) {
-	struct thread *curr = thread_current ();
-
-	RETURN_VALUE_IF (page == NULL || frame == NULL, false);
-	RETURN_VALUE_IF (curr == NULL || curr->pml4 == NULL, false);
-	RETURN_VALUE_IF (page->va == NULL || frame->kva == NULL, false);
-
-	pml4_clear_page (curr->pml4, page->va);
-	RETURN_VALUE_IF (!pml4_set_page (curr->pml4, page->va,
-	                                 frame->kva, writable), false);
-
-	frame->page = page;
-	frame->owner_thread = curr;
-	page->frame = frame;
-	return true;
+vm_handle_wp (struct page *page UNUSED) {
+	return false;
 }
 
 
@@ -419,6 +361,7 @@ vm_handle_write_protect_fault (void *addr, bool write) {
 void
 vm_dealloc_page (struct page *page) {
 	destroy (page);
+	vm_destroy_page_frame(page);
 	free (page);
 }
 
@@ -434,7 +377,7 @@ vm_claim_page (void *va) {
 	RETURN_VALUE_IF (page == NULL, false);
 
 	return vm_do_claim_page (page);
-
+	
 }
 
 /* PAGE를 실제 메모리에 올리고 MMU 매핑을 설정한다. */
@@ -495,9 +438,7 @@ supplemental_page_table_kill (struct supplemental_page_table *spt UNUSED) {
 static void
 spt_page_destroy (struct hash_elem *e, void *aux UNUSED) {
 	struct page *page = hash_entry (e, struct page, hash_elem);
-	destroy (page);
-	vm_destroy_page_frame (page);
-	free (page);
+	vm_dealloc_page(page);
 }
 
 static void
@@ -519,5 +460,6 @@ vm_destroy_page_frame (struct page *page) {
 	frame->page = NULL;
 	frame->owner_thread = NULL;
 	free (frame);
-
+	
 }
+

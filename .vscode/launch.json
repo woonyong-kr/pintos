@@ -2,111 +2,18 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "테스트 디버거",
+            "name": "Pintos Debug",
             "type": "cppdbg",
             "request": "launch",
-            "preLaunchTask": "Pintos: Start debug test GDB server",
-            "postDebugTask": "Pintos: Stop debug test GDB server",
-            "program": "${workspaceFolder}/pintos/vm/build/kernel.o",
-            "cwd": "${workspaceFolder}/pintos/vm/build",
+            // 이 부분을 아래처럼 정확한 경로로 수정!
+            "program": "/workspaces/SW_AI-W09-pintos/pintos/threads/build/kernel.o",
+            "cwd": "/workspaces/SW_AI-W09-pintos/pintos/threads/build",
             "miDebuggerServerAddress": "localhost:1234",
             "miDebuggerPath": "/usr/bin/gdb",
             "MIMode": "gdb",
-            "stopAtEntry": false,
-            "launchCompleteCommand": "exec-continue",
-            "sourceFileMap": {
-                "/workspaces/SW_AI-W11-pintos": "${workspaceFolder}",
-                "/workspaces/wk11_7": "${workspaceFolder}",
-                "../../": "${workspaceFolder}/pintos"
-            },
             "setupCommands": [
                 {
                     "text": "-enable-pretty-printing",
-                    "ignoreFailures": true
-                },
-                {
-                    "text": "source ${workspaceFolder}/.vscode/pintos-debug.gdb",
-                    "ignoreFailures": false
-                },
-                {
-                    "text": "source ${workspaceFolder}/pintos/tools/debug-test/generated/debug-breakpoints.gdb",
-                    "ignoreFailures": false
-                }
-            ]
-        },
-        {
-            "name": "VM GDB 서버에 연결",
-            "type": "cppdbg",
-            "request": "launch",
-            "program": "${workspaceFolder}/pintos/vm/build/kernel.o",
-            "cwd": "${workspaceFolder}/pintos/vm/build",
-            "miDebuggerServerAddress": "localhost:1234",
-            "miDebuggerPath": "/usr/bin/gdb",
-            "MIMode": "gdb",
-            "stopAtEntry": false,
-            "launchCompleteCommand": "exec-continue",
-            "sourceFileMap": {
-                "/workspaces/SW_AI-W11-pintos": "${workspaceFolder}",
-                "/workspaces/wk11_7": "${workspaceFolder}",
-                "../../": "${workspaceFolder}/pintos"
-            },
-            "setupCommands": [
-                {
-                    "text": "-enable-pretty-printing",
-                    "ignoreFailures": true
-                },
-                {
-                    "text": "source ${workspaceFolder}/.vscode/pintos-debug.gdb",
-                    "ignoreFailures": true
-                }
-            ]
-        },
-        {
-            "name": "userprog GDB 서버에 연결",
-            "type": "cppdbg",
-            "request": "launch",
-            "program": "${workspaceFolder}/pintos/userprog/build/kernel.o",
-            "cwd": "${workspaceFolder}/pintos/userprog/build",
-            "miDebuggerServerAddress": "localhost:1234",
-            "miDebuggerPath": "/usr/bin/gdb",
-            "MIMode": "gdb",
-            "sourceFileMap": {
-                "/workspaces/SW_AI-W11-pintos": "${workspaceFolder}",
-                "/workspaces/wk11_7": "${workspaceFolder}",
-                "../../": "${workspaceFolder}/pintos"
-            },
-            "setupCommands": [
-                {
-                    "text": "-enable-pretty-printing",
-                    "ignoreFailures": true
-                },
-                {
-                    "text": "source ${workspaceFolder}/.vscode/pintos-debug.gdb",
-                    "ignoreFailures": true
-                }
-            ]
-        },
-        {
-            "name": "threads GDB 서버에 연결",
-            "type": "cppdbg",
-            "request": "launch",
-            "program": "${workspaceFolder}/pintos/threads/build/kernel.o",
-            "cwd": "${workspaceFolder}/pintos/threads/build",
-            "miDebuggerServerAddress": "localhost:1234",
-            "miDebuggerPath": "/usr/bin/gdb",
-            "MIMode": "gdb",
-            "sourceFileMap": {
-                "/workspaces/SW_AI-W11-pintos": "${workspaceFolder}",
-                "/workspaces/wk11_7": "${workspaceFolder}",
-                "../../": "${workspaceFolder}/pintos"
-            },
-            "setupCommands": [
-                {
-                    "text": "-enable-pretty-printing",
-                    "ignoreFailures": true
-                },
-                {
-                    "text": "source ${workspaceFolder}/.vscode/pintos-debug.gdb",
                     "ignoreFailures": true
                 }
             ]

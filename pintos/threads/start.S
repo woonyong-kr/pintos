@@ -17,17 +17,7 @@ _start = RELOC(bootstrap)
 .globl bootstrap
 .func bootstrap
 .code32
-#### 64비트 코드로 진입하기 위한 부트스트랩이다.
-####
-#### loader.S는 이미 커널 이미지를 RAM으로 복사한 뒤 물리 주소
-#### LOADER_PHYS_BASE로 제어를 넘겼다. 여기의 코드는 처음 실행되는 커널
-#### 코드다. 아직 PintOS 하위 시스템을 초기화하는 단계가 아니라, 64비트 C
-#### 코드를 안전하게 실행할 수 있을 만큼의 CPU 상태만 만든다.
-####
-#### 중요한 경계:
-#### - init.c:main() 전에는 PintOS 스레드 추상화가 없다.
-#### - init.c:main() -> thread_init() 이후에는 현재 실행 중인 커널 흐름이
-####   최초의 "main" 스레드로 표현된다.
+#### bootstrap to the 64bit code.
 bootstrap:
 	pushf
 	pop %eax
@@ -154,13 +144,9 @@ boot_pde2:
 .globl entry_64
 .func entry_64
 entry_64:
-	#### 0 ~ 0x1000 영역을 부트 스택으로 사용한다.
+	#### We will use 0 ~ 0x1000 as boot stack.
 	xor %rbp, %rbp
 	movabs $(LOADER_KERN_BASE + 0x1000), %rsp
-	#### 이 지점부터 CPU는 임시 부트 페이지 테이블과 스택을 가진 64비트
-	#### long mode 상태다. main() 호출은 C 레벨 커널 초기화로 들어가는
-	#### 경계이며, 실제 할당자, 페이지 테이블, 인터럽트 테이블, 스케줄러,
-	#### 선택적인 user/file/VM 하위 시스템은 아직 여기서부터 만들어야 한다.
 	movabs $main, %rax
 	call *%rax
 .endfunc

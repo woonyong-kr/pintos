@@ -7,6 +7,7 @@
 #include "intrinsic.h"
 #include "userprog/process.h"
 
+
 /*
  * 처리된 페이지 폴트의 개수.
  */
@@ -39,7 +40,7 @@ exception_init (void) {
 	intr_register_int (3, 3, INTR_ON, kill, "#BP Breakpoint Exception");
 	intr_register_int (4, 3, INTR_ON, kill, "#OF Overflow Exception");
 	intr_register_int (5, 3, INTR_ON, kill,
-	                   "#BR BOUND Range Exceeded Exception");
+			"#BR BOUND Range Exceeded Exception");
 
 	/*
 	 * 이 예외들은 DPL==0을 가지므로 유저 프로세스가 INT 명령으로
@@ -50,13 +51,13 @@ exception_init (void) {
 	intr_register_int (1, 0, INTR_ON, kill, "#DB Debug Exception");
 	intr_register_int (6, 0, INTR_ON, kill, "#UD Invalid Opcode Exception");
 	intr_register_int (7, 0, INTR_ON, kill,
-	                   "#NM Device Not Available Exception");
+			"#NM Device Not Available Exception");
 	intr_register_int (11, 0, INTR_ON, kill, "#NP Segment Not Present");
 	intr_register_int (12, 0, INTR_ON, kill, "#SS Stack Fault Exception");
 	intr_register_int (13, 0, INTR_ON, kill, "#GP General Protection Exception");
 	intr_register_int (16, 0, INTR_ON, kill, "#MF x87 FPU Floating-Point Error");
 	intr_register_int (19, 0, INTR_ON, kill,
-	                   "#XF SIMD Floating-Point Exception");
+			"#XF SIMD Floating-Point Exception");
 
 	/*
 	 * 대부분의 예외는 인터럽트를 켠 상태로 처리해도 된다.
@@ -92,34 +93,34 @@ kill (struct intr_frame *f) {
 	 * 인터럽트 프레임의 코드 세그먼트 값은 예외가 어디서 발생했는지 알려준다.
 	 */
 	switch (f->cs) {
-	case SEL_UCSEG:
-		/*
-		 * 유저 코드 세그먼트이므로, 예상대로 유저 예외다.
-		 * 유저 프로세스를 종료한다.
-		 */
-		printf ("%s: dying due to interrupt %#04llx (%s).\n",
-		        thread_name (), f->vec_no, intr_name (f->vec_no));
-		intr_dump_frame (f);
-		thread_exit ();
+		case SEL_UCSEG:
+			/*
+			 * 유저 코드 세그먼트이므로, 예상대로 유저 예외다.
+			 * 유저 프로세스를 종료한다.
+			 */
+			printf ("%s: dying due to interrupt %#04llx (%s).\n",
+					thread_name (), f->vec_no, intr_name (f->vec_no));
+			intr_dump_frame (f);
+			thread_exit ();
 
-	case SEL_KCSEG:
-		/*
-		 * 커널 코드 세그먼트이며, 이는 커널 버그를 의미한다.
-		 * 커널 코드는 예외를 던지면 안 된다.
-		 * (페이지 폴트가 커널 예외를 유발할 수는 있지만, 그 경우도 여기에
-		 * 도달해서는 안 된다.) 문제를 분명히 하기 위해 커널 패닉을 낸다.
-		 */
-		intr_dump_frame (f);
-		PANIC ("Kernel bug - unexpected interrupt in kernel");
+		case SEL_KCSEG:
+			/*
+			 * 커널 코드 세그먼트이며, 이는 커널 버그를 의미한다.
+			 * 커널 코드는 예외를 던지면 안 된다.
+			 * (페이지 폴트가 커널 예외를 유발할 수는 있지만, 그 경우도 여기에
+			 * 도달해서는 안 된다.) 문제를 분명히 하기 위해 커널 패닉을 낸다.
+			 */
+			intr_dump_frame (f);
+			PANIC ("Kernel bug - unexpected interrupt in kernel");
 
-	default:
-		/*
-		 * 다른 코드 세그먼트인가? 일어나면 안 된다.
-		 * 커널을 패닉시킨다.
-		 */
-		printf ("Interrupt %#04llx (%s) in unknown segment %04x\n",
-		        f->vec_no, intr_name (f->vec_no), f->cs);
-		thread_exit ();
+		default:
+			/*
+			 * 다른 코드 세그먼트인가? 일어나면 안 된다.
+			 * 커널을 패닉시킨다.
+			 */
+			printf ("Interrupt %#04llx (%s) in unknown segment %04x\n",
+					f->vec_no, intr_name (f->vec_no), f->cs);
+			thread_exit ();
 	}
 }
 
@@ -136,13 +137,30 @@ kill (struct intr_frame *f) {
  */
 static void
 page_fault (struct intr_frame *f) {
+	/*
+	 * 참이면 페이지가 존재하지 않았고, 거짓이면 읽기 전용 페이지에 쓰기를 시도한 것이다.
+	 */
 	bool not_present;
+	/*
+	 * 참이면 쓰기 접근이고, 거짓이면 읽기 접근이다.
+	 */
 	bool write;
+	/*
+	 * 참이면 유저 접근이고, 거짓이면 커널 접근이다.
+	 */
 	bool user;
+	/*
+	 * fault가 발생한 주소.
+	 */
 	void *fault_addr;
 
-	// fault를 일으킨 주소
-	fault_addr = (void *) rcr2 ();
+	/*
+	 * fault를 일으킨 주소, 즉 접근 시도로 인해 fault가 발생한 가상 주소를 얻는다.
+	 * 이 주소는 코드나 데이터를 가리킬 수 있다.
+	 * 또한 이것이 fault를 일으킨 명령어의 주소(f->rip)와 같은 것은 아니다.
+	 */
+
+	fault_addr = (void *) rcr2();
 
 	/*
 	 * 인터럽트를 다시 켠다.
@@ -150,28 +168,40 @@ page_fault (struct intr_frame *f) {
 	 */
 	intr_enable ();
 
+
+	/*
+	 * 원인을 판별한다.
+	 */
 	not_present = (f->error_code & PF_P) == 0;
 	write = (f->error_code & PF_W) != 0;
 	user = (f->error_code & PF_U) != 0;
 
 #ifdef VM
-	// fault 처리
+	/*
+	 * 프로젝트 3 이후를 위한 코드다.
+	 */
 	if (vm_try_handle_fault (f, fault_addr, user, write, not_present))
 		return;
 #endif
 
-	// fault 카운트
+
+	/*
+	 * 페이지 폴트 수를 센다.
+	 */
 	page_fault_cnt++;
 
-	// 유저 모드 fault면 프로세스 종료
+		/* 유저가 인자값으로 NULL을 보낼때 커널이 죽는 커널 패닉이(case SEL_KCSEG) 아닌 유저 프로세스를 종료시켜야함(exit -1) */
 	if (f->cs == SEL_UCSEG)
-		process_exit_with_status (-1);
+	process_exit_with_status (-1);
 
-	// 정보 출력 후 kill
+	/*
+	 * 실제 fault라면 정보를 출력하고 종료한다.
+	 */
 	printf ("Page fault at %p: %s error %s page in %s context.\n",
-	        fault_addr,
-	        not_present ? "not present" : "rights violation",
-	        write ? "writing" : "reading",
-	        user ? "user" : "kernel");
+			fault_addr,
+			not_present ? "not present" : "rights violation",
+			write ? "writing" : "reading",
+			user ? "user" : "kernel");
 	kill (f);
 }
+

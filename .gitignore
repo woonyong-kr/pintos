@@ -48,8 +48,8 @@ cmake-build-debug/
 # Claude 설정
 .claude/
 
-# PintOS 로컬 디버그 테스트 생성 파일
-/pintos/tools/debug-test/generated/
+# 로컬 편의용 Makefile
+/Makefile
 
 # Annotation (auto-generated)
 .jungle-kit/

@@ -772,6 +772,9 @@ index 64718fa..f57b921 100644
  /*
   * initd와 다른 프로세스를 위한 일반적인 프로세스 초기화 함수.
   */
+-/* @todo
+- * 프로세스를 위한 초기화 함수 (미구현)
+- */
  static void
  process_init (void) {
 -	struct thread *current UNUSED = thread_current ();
@@ -976,6 +979,9 @@ index 64718fa..f57b921 100644
  	/*
  	 * 먼저 현재 문맥을 제거한다.
  	 */
+-	/* @todo
+-	 * 이전 주소 공간 초기화 (미구현)
+-	 */
  	process_cleanup ();
  
  	/*
@@ -1012,6 +1018,18 @@ index 64718fa..f57b921 100644
  	process_cleanup ();
  }
  
+-/* @todo
+- * process_add_file - 파일을 fd_table에 등록하고 fd 번호를 반환한다.
+- *
+- * 구현해야 할 것:
+- * 1. curr->next_fd가 FD_MAX 이상이면 -1 반환 (테이블 꽉 참).
+- * 2. curr->fd_table[curr->next_fd] = f 로 저장.
+- * 3. curr->next_fd를 반환값으로 쓰고, next_fd++ 증가.
+- * 4. 반환한 fd 번호를 돌려준다.
+- *
+- * 주의: 중간에 close로 빈 슬롯이 생기면 next_fd 방식은
+- * 그 빈 자리를 재활용하지 못한다. 단순 구현에서는 괜찮지만,
+- * multi-oom 테스트를 통과하려면 빈 슬롯 탐색이 필요할 수 있다. */
  int
  process_add_file (struct file *f) {
  	struct thread *curr = thread_current ();
@@ -1035,6 +1053,12 @@ index 64718fa..f57b921 100644
  	return -1;
  }
  
+-/* @todo
+- * process_get_file - fd 번호로 파일 포인터를 반환한다.
+- *
+- * 구현해야 할 것:
+- * 1. fd가 범위 밖이면 (fd < 0 || fd >= FD_MAX) NULL 반환.
+- * 2. curr->fd_table[fd]를 반환한다 (NULL이면 열리지 않은 fd). */
  struct file *
  process_get_file (int fd) {
  	struct thread *curr = thread_current ();
@@ -1048,6 +1072,14 @@ index 64718fa..f57b921 100644
 +	return NULL;
  }
  
+-/* @todo
+- * process_close_file - fd를 닫고 fd_table에서 제거한다.
+- *
+- * 구현해야 할 것:
+- * 1. fd가 범위 밖이면 (fd < 2 || fd >= FD_MAX) 무시 (0,1은 예약).
+- * 2. curr->fd_table[fd]가 NULL이면 무시.
+- * 3. file_close(curr->fd_table[fd]) 호출.
+- * 4. curr->fd_table[fd] = NULL로 비운다. */
  void
  process_close_file (int fd) {
  	struct thread *curr = thread_current ();
