@@ -4,7 +4,6 @@
 
 struct page;
 enum vm_type;
-
 typedef bool vm_initializer (struct page *, void *aux);
 
 /* 초기화되지 않은 페이지.

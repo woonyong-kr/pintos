@@ -89,7 +89,7 @@ spt_entry_from_page (struct page *page) {
 static void
 vm_destroy_page_frame (struct page *page);
 static void
-spt_entry_destroy (struct hash_elem *e, void *aux UNUSED);
+spt_page_destroy (struct hash_elem *e, void *aux UNUSED);
 
 static uint64_t
 spt_entry_hash (const struct hash_elem *e, void *aux UNUSED) {
@@ -477,33 +477,8 @@ supplemental_page_table_copy (struct supplemental_page_table *dst,
   hash_first (&i, &src->hash_table);
   while (hash_next (&i))
     {
-      struct page *f = hash_entry (hash_cur (&i), struct page, hash_elem);
-      enum vm_type page_type = VM_TYPE (f->operations->type);
-      if (page_type == VM_UNINIT)
-        {
-          void *aux = f->uninit.aux;
-          if (aux)
-            {
-              struct lazy_load_arg *temp_aux
-                  = (struct lazy_load_arg *)malloc (sizeof (struct lazy_load_arg));
-              memcpy (temp_aux, f->uninit.aux, sizeof (struct lazy_load_arg));
-              if (temp_aux->file)
-                {
-                  temp_aux->file = file_reopen (temp_aux->file);
-                  if (temp_aux->file == NULL)
-                    {
-                      free (temp_aux);
-                      return false;
-                    }
-                }
-              aux = temp_aux;
-            }
-
-	hash_first (&i, &src->pages);
-	while (hash_next (&i)) {
-		struct spt_entry *entry = hash_entry (hash_cur (&i), struct spt_entry,
-		                                      hash_elem);
-		RETURN_VALUE_IF (!spt_copy_page (dst, &entry->page), false);
+      struct page *src_page = hash_entry (hash_cur (&i), struct page, hash_elem);
+	  RETURN_FALSE_IF(!copy(dst, src_page));
 	}
 	return true;
 }
@@ -626,11 +601,11 @@ supplemental_page_table_kill (struct supplemental_page_table *spt UNUSED) {
 	/* TODO: Destroy all the supplemental_page_table hold by thread and
 	 * TODO: writeback all the modified contents to the storage. */
 	RETURN_IF (spt == NULL);
-	hash_destroy(&spt->hash_table, spt_entry_destroy);
+	hash_destroy(&spt->hash_table, spt_page_destroy);
 }
 
 static void
-spt_entry_destroy (struct hash_elem *e, void *aux UNUSED) {
+spt_page_destroy (struct hash_elem *e, void *aux UNUSED) {
 	struct page *page = hash_entry (e, struct page, hash_elem);
 	destroy (page);
 	vm_destroy_page_frame (page);
@@ -645,7 +620,7 @@ vm_destroy_page_frame (struct page *page) {
 
 	lock_acquire (&frame_lock);
 	if (clock_ptr == &frame->elem)
-		clock_ptr = list_next(&frame_table);
+		clock_ptr = list_next(&frame->elem);
 	list_remove (&frame->elem);
 	lock_release (&frame_lock);
 
@@ -658,3 +633,4 @@ vm_destroy_page_frame (struct page *page) {
 	free (frame);
 	
 }
+

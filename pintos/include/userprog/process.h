@@ -19,4 +19,8 @@ void process_exit_with_status (int status);
 int process_add_file (struct file *f);
 struct file *process_get_file (int fd);
 void process_close_file (int fd);
+
+/* lazy_load_segment()가 page fault 시점에 파일 page를 채우는 데 필요한 정보. */
+
+
 #endif /* userprog/process.h */

@@ -14,12 +14,14 @@
 
 static bool uninit_initialize (struct page *page, void *kva);
 static void uninit_destroy (struct page *page);
+static bool uninit_copy (struct supplemental_page_table *dst, struct page *src_page);
 
 /* 이 구조체는 수정하지 말 것. */
 static const struct page_operations uninit_ops = {
 	.swap_in = uninit_initialize,
 	.swap_out = NULL,
 	.destroy = uninit_destroy,
+	.copy = uninit_copy,
 	.type = VM_UNINIT,
 };
 
@@ -63,12 +65,36 @@ uninit_initialize (struct page *page, void *kva) {
  * 남아 있을 수 있다. PAGE 자체는 호출자가 해제한다. */
 static void
 uninit_destroy (struct page *page) {
-	RETURN_IF (page == NULL);
-	struct lazy_load_arg *aux = page->uninit.aux;
+	struct uninit_page *uninit UNUSED = &page->uninit;
+	/* TODO: Fill this function.
+	 * TODO: If you don't have anything to do, just return. */
+	return;
+}
 
-	RETURN_IF (aux == NULL);
-	if (aux->file != NULL)
-		file_close (aux->file);
-	free (aux);
-	page->uninit.aux = NULL;
+static bool
+uninit_copy (struct supplemental_page_table *dst, struct page *src_page){
+	RETURN_FALSE_IF (src_page == NULL);
+	void *aux = src_page->uninit.aux;
+	if (aux)
+	{
+		struct lazy_load_arg *temp_aux
+			= (struct lazy_load_arg *)malloc (sizeof (struct lazy_load_arg));
+		memcpy (temp_aux, src_page->uninit.aux, sizeof (struct lazy_load_arg));
+		if (temp_aux->file)
+		{
+			temp_aux->file = file_reopen (temp_aux->file);
+			if (temp_aux->file == NULL)
+			{
+				free (temp_aux);
+				return false;
+			}
+		}
+		aux = temp_aux;
+	}
+
+	if (!vm_alloc_page_with_initializer (
+			src_page->uninit.type, src_page->va, src_page->writable,
+			src_page->uninit.init, aux))
+		return false;
+	return true;
 }

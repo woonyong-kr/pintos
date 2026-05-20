@@ -15,12 +15,14 @@ static struct lock swap_lock;
 static bool anon_swap_in (struct page *page, void *kva);
 static bool anon_swap_out (struct page *page);
 static void anon_destroy (struct page *page);
+static bool anon_copy (struct supplemental_page_table *dst, struct page *src_page);
 
 /* 이 구조체는 수정하지 말 것. */
 static const struct page_operations anon_ops = {
 	.swap_in = anon_swap_in,
 	.swap_out = anon_swap_out,
 	.destroy = anon_destroy,
+	.copy = anon_copy,
 	.type = VM_ANON,
 };
 
@@ -111,4 +113,22 @@ anon_destroy (struct page *page) {
 		lock_release (&swap_lock);
 	}
 
+}
+
+static bool
+anon_copy (struct supplemental_page_table *dst, struct page *src_page){
+	RETURN_FALSE_IF (src_page == NULL);
+
+	RETURN_FALSE_IF(!vm_alloc_page (page_get_type(src_page), src_page->va, src_page->writable));
+	RETURN_FALSE_IF(!vm_claim_page (src_page->va));
+
+	struct page *dst_page = spt_find_page (dst, src_page->va);
+	if (src_page->anon.swapped){
+		for (int i = 0; i < SWAP_SLOT; i++){
+			disk_read(swap_disk, src_page->anon.swap_idx * 8 + i, (uint8_t *)dst_page->frame->kva + i * 512);
+		}
+	}else{
+		memcpy(dst_page->frame->kva, src_page->frame->kva, PGSIZE);
+	}
+	return true;
 }
