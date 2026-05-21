@@ -13,6 +13,7 @@
 
 static struct list frame_table;
 static struct lock frame_lock;
+static struct list_elem *clock_hand;
 
 /* 각 하위 시스템의 초기화 코드를 호출해 가상 메모리 하위 시스템을 초기화한다. */
 void
@@ -27,6 +28,7 @@ vm_init (void) {
 	/* TODO: Your code goes here. */
 	list_init(&frame_table);
 	lock_init(&frame_lock);
+	clock_hand = NULL;
 }
 
 /* 페이지 타입을 얻는다. 아직 초기화되지 않은 페이지가 실제로 어떤 타입으로
@@ -47,6 +49,8 @@ page_get_type (struct page *page) {
 static struct frame *vm_get_victim (void);
 static bool vm_do_claim_page (struct page *page);
 static struct frame *vm_evict_frame (void);
+static bool vm_frame_evictable (struct frame *frame);
+static struct list_elem *vm_next_clock_elem (struct list_elem *e);
 static uint64_t page_hash (const struct hash_elem *e, void *aux UNUSED);
 static bool page_less (const struct hash_elem *a, const struct hash_elem *b, void *aux UNUSED);
 static bool vm_fault_addr_invalid (void *addr);
@@ -176,19 +180,83 @@ spt_remove_page (struct supplemental_page_table *spt, struct page *page) {
 static struct frame *
 vm_get_victim (void) {
 	struct frame *victim = NULL;
-	/* TODO: 교체 정책은 직접 정한다. */
+	struct list_elem *e;
+	size_t scan_count;
+	size_t max_scans;
+
+	lock_acquire (&frame_lock);
+	if (list_empty (&frame_table))
+		goto done;
+
+	if (clock_hand == NULL || clock_hand == list_end (&frame_table))
+		clock_hand = list_begin (&frame_table);
+
+	max_scans = list_size (&frame_table) * 2;
+	for (scan_count = 0; scan_count < max_scans; scan_count++) {
+		e = clock_hand;
+		struct frame *frame = list_entry (e, struct frame, elem);
+		struct page *page;
+		struct thread *owner;
+
+		if (!vm_frame_evictable (frame))
+			goto next;
+
+		page = frame->page;
+		owner = frame->owner_thread;
+		if (owner != NULL && owner->pml4 != NULL &&
+		    pml4_is_accessed (owner->pml4, page->va)) {
+			pml4_set_accessed (owner->pml4, page->va, false);
+			goto next;
+		}
+
+		victim = frame;
+		clock_hand = vm_next_clock_elem (clock_hand);
+		break;
+next:
+		clock_hand = vm_next_clock_elem (clock_hand);
+	}
+done:
+	lock_release (&frame_lock);
 
 	return victim;
+}
+
+static bool
+vm_frame_evictable (struct frame *frame) {
+	return frame != NULL && frame->kva != NULL && frame->page != NULL &&
+	       frame->ref_count == 1;
+}
+
+static struct list_elem *
+vm_next_clock_elem (struct list_elem *e) {
+	if (e == NULL || e == list_end (&frame_table))
+		return list_begin (&frame_table);
+	e = list_next (e);
+	return e == list_end (&frame_table) ? list_begin (&frame_table) : e;
 }
 
 /* 페이지 하나를 내보내고 그 페이지에 대응하던 프레임을 반환한다.
  * 오류가 있으면 NULL을 반환한다. */
 static struct frame *
 vm_evict_frame (void) {
-	struct frame *victim UNUSED = vm_get_victim ();
-	/* TODO: swap out the victim and return the evicted frame. */
+	struct frame *victim = vm_get_victim ();
+	struct page *page;
+	struct thread *owner;
 
-	return NULL;
+	RETURN_VALUE_IF (victim == NULL || victim->page == NULL, NULL);
+
+	page = victim->page;
+	owner = victim->owner_thread;
+	RETURN_VALUE_IF (!swap_out (page), NULL);
+
+	if (owner != NULL && owner->pml4 != NULL)
+		pml4_clear_page (owner->pml4, page->va);
+
+	page->frame = NULL;
+	victim->page = NULL;
+	victim->owner_thread = NULL;
+	victim->ref_count = 1;
+	return victim;
 }
 
 /* palloc()을 호출해서 프레임을 얻는다.
@@ -212,11 +280,9 @@ vm_get_frame (void) {
 		frame->page = NULL;
 	}
 	else {
-		/*eviction 하는 코드 아직없움
-		vm_evict_frame ();
-		*/
 		free(frame);
-		return NULL;
+		frame = vm_evict_frame ();
+		RETURN_VALUE_IF (frame == NULL, NULL);
 	}
 	/*
 	list_init(&frame_table) vm 초기화 시점에 있어야함
@@ -228,9 +294,22 @@ vm_get_frame (void) {
 	frame->owner_thread = thread_current ();
 	frame->ref_count = 1;
 
-	lock_acquire (&frame_lock);
-	list_push_back(&frame_table, &frame->elem);
-	lock_release (&frame_lock);
+	if (frame->page == NULL) {
+		bool in_table = false;
+		struct list_elem *e;
+
+		lock_acquire (&frame_lock);
+		for (e = list_begin (&frame_table); e != list_end (&frame_table);
+		     e = list_next (e)) {
+			if (list_entry (e, struct frame, elem) == frame) {
+				in_table = true;
+				break;
+			}
+		}
+		if (!in_table)
+			list_push_back(&frame_table, &frame->elem);
+		lock_release (&frame_lock);
+	}
 
 	// ASSERT (frame != NULL);
 	// ASSERT (frame->page == NULL);
@@ -479,6 +558,9 @@ supplemental_page_table_copy (struct supplemental_page_table *dst UNUSED,
 		struct page *src_page = hash_entry (hash_cur (&i), struct page,
 		                                    hash_elem);
 		enum vm_type page_type = page_get_type (src_page);
+
+		if (page_type == VM_FILE)
+			continue;
 
 		if (page_type == VM_UNINIT) {
 			if (!spt_copy_uninit_page (src_page))

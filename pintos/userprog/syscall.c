@@ -40,6 +40,8 @@ bool remove (const char *file, struct intr_frame *f);
 void seek (int fd, unsigned position);
 unsigned tell (int fd);
 int filesize (int fd);
+void *mmap (void *addr, size_t length, int writable, int fd, off_t offset);
+void munmap (void *addr);
 void check_address (const void *addr);
 static bool user_page_present (struct thread *curr, const void *addr);
 static bool user_page_accessible (struct thread *curr, const void *addr,
@@ -153,6 +155,13 @@ syscall_handler (struct intr_frame *f UNUSED) {
 		break;
 	case SYS_TELL:
 		f->R.rax = tell (f->R.rdi);
+		break;
+	case SYS_MMAP:
+		f->R.rax = (uint64_t) mmap ((void *) f->R.rdi, f->R.rsi,
+		                            f->R.rdx, f->R.r10, f->R.r8);
+		break;
+	case SYS_MUNMAP:
+		munmap ((void *) f->R.rdi);
 		break;
 	default:
 		break;
@@ -390,6 +399,46 @@ tell (int fd) {
 		position = file_tell (f);
 	lock_release (&filesys_lock);
 	return position;
+}
+
+void *
+mmap (void *addr, size_t length, int writable, int fd, off_t offset) {
+#ifdef VM
+	struct file *file;
+	uintptr_t start = (uintptr_t) addr;
+	uintptr_t end;
+	off_t file_len;
+
+	if (addr == NULL || length == 0 || pg_ofs (addr) != 0 ||
+	    offset < 0 || pg_ofs (offset) != 0 || fd < 2)
+		return NULL;
+
+	end = start + length - 1;
+	if (end < start || is_kernel_vaddr ((void *) start) ||
+	    is_kernel_vaddr ((void *) end))
+		return NULL;
+
+	file = process_get_file (fd);
+	if (file == NULL)
+		return NULL;
+
+	lock_acquire (&filesys_lock);
+	file_len = file_length (file);
+	lock_release (&filesys_lock);
+	if (file_len == 0)
+		return NULL;
+
+	return do_mmap (addr, length, writable, file, offset);
+#else
+	return NULL;
+#endif
+}
+
+void
+munmap (void *addr) {
+#ifdef VM
+	do_munmap (addr);
+#endif
 }
 /* 여기서부턴 헬퍼 함수 기술 */
 static bool

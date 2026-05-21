@@ -27,6 +27,7 @@ struct lazy_load_arg {
 	off_t ofs;
 	size_t page_read_bytes;
 	size_t page_zero_bytes;
+	void *map_start;
 };
 
 #endif /* userprog/process.h */
