@@ -1,89 +1,46 @@
-# SW_AI-W09 Pintos
+# PintOS 가상 메모리와 Copy-on-Write
 
-KAIST Pintos 기반으로 Project 1~4를 진행하는 팀 저장소입니다.  
-현재 저장소는 `Project 2: User Programs`의 `fork`, `exec`, `wait`, `exit`, 파일 디스크립터 흐름을 중심으로 작업 중입니다.
+## 무엇을 푸는가
 
-## 프로젝트 개요
+- KAIST PintOS 교육용 커널에서 페이지, 프레임, swap의 생명주기를 구현합니다.
+- `fork` 직후 메모리를 복제하지 않고 실제 쓰기 시점까지 복사를 미루는 Copy-on-Write를 다룹니다.
+- 팀 구현이며 Git 이력 기준 전체 261개 커밋 중 본인 커밋은 194개입니다.
 
-- 기준 코드: KAIST Pintos 64-bit
-- 주요 작업 영역: `pintos/threads`, `pintos/userprog`, `pintos/vm`
-- 문서화 기준: `docs/convention`
-- 작업 브랜치: `dev`, `woonyong`
+## 어디를 보면 되는가
 
-## 현재 상태
+| 경로 | 이 파일이 답하는 질문 |
+| --- | --- |
+| [`pintos/include/vm/vm.h`](pintos/include/vm/vm.h) | 페이지와 프레임은 어떤 메타데이터로 연결됩니까? |
+| [`pintos/vm/vm.c`](pintos/vm/vm.c) | page fault가 COW 판정과 프레임 재매핑으로 어떻게 이어집니까? |
+| [`pintos/vm/anon.c`](pintos/vm/anon.c) | anonymous page와 공유 swap slot의 참조 수를 어떻게 관리합니까? |
+| [`pintos/vm/file.c`](pintos/vm/file.c) | file-backed page의 swap-out과 destroy는 어떤 경로를 탑니까? |
+| [`pintos/userprog/exception.c`](pintos/userprog/exception.c) | CPU page fault가 VM 계층으로 어디에서 전달됩니까? |
+| [`pintos/tests/vm`](pintos/tests/vm) | lazy loading, stack growth, mmap, swap을 어떤 시나리오로 검증합니까? |
 
-- `create`, `open`, `close`, `write`, `exit` 시스템 콜 기본 흐름이 들어가 있습니다.
-- `fork`는 `child_status` 기반 부모-자식 메타데이터 구조와 시스템 콜 진입 경로까지 연결되어 있습니다.
-- `wait`, `exec`, `exit` 전체 생명주기 완성은 아직 진행 중입니다.
-- 취소된 PR의 비중복 차이는 [docs/merge-recovery](docs/merge-recovery/README.md)에 복구 아카이브로 보관합니다.
+## 설계 판단
 
-## 빠른 이동
+### `ref_count`와 owner list를 분리하는 이유
 
-- 변경 이력: [CHANGELOG.md](CHANGELOG.md)
-- 프로세스 테스트 정리: [pintos-project2-process-tests.md](pintos-project2-process-tests.md)
-- 구현 가이드: [docs/pintos/08-implementation-guide.md](docs/pintos/08-implementation-guide.md)
-- 팀 전략: [docs/pintos/09-team-strategy.md](docs/pintos/09-team-strategy.md)
-- 코드/문서 컨벤션: [docs/convention/README.md](docs/convention/README.md)
+`ref_count`는 한 프레임을 **몇 개의 페이지가 보고 있는지** 답하지만, **어떤 페이지와 페이지 테이블이 보고 있는지**는 답하지 못합니다. 공유 프레임을 회수할 때는 모든 소유 페이지의 `frame` 연결과 각 프로세스의 PML4 매핑을 지워야 하므로 숫자만으로는 충분하지 않습니다. 따라서 공유 수명 판단은 `ref_count`, 실제 역참조 대상 식별은 `(page, thread)` owner list가 담당하도록 책임을 분리합니다.
 
-## 디렉터리 구조
+현재 커밋된 코드에는 프레임 `ref_count`가 있으며, 다중 owner list를 이용한 회수 보완은 아직 커밋되지 않은 작업 트리 변경입니다. 이 README에서는 해당 보완을 완료 기능이나 개인 단독 구현으로 표시하지 않습니다.
 
-```text
-SW_AI-W09-pintos/
-├── README.md
-├── CHANGELOG.md
-├── pintos-project2-process-tests.md
-├── docs/
-│   ├── convention/
-│   ├── merge-recovery/
-│   └── pintos/
-├── pintos/
-│   ├── threads/
-│   ├── userprog/
-│   ├── vm/
-│   └── README.md
-└── scripts/
-```
+### swap slot에도 참조 계수를 두는 이유
 
-## 개발 환경
+COW 대상 페이지가 메모리에서 내려가면 부모와 자식이 같은 swap slot을 공유할 수 있습니다. 한쪽이 먼저 swap-in하거나 종료되어도 다른 쪽은 그 slot을 계속 읽어야 하므로 첫 접근에서 bitmap을 해제하면 안 됩니다. [`pintos/vm/anon.c`](pintos/vm/anon.c)는 별도의 `swap_ref_count`를 두고 참조가 0이 되는 시점에만 slot을 반환합니다.
 
-이 저장소는 `x86-64 Linux` 기준 Pintos 빌드 환경을 전제로 합니다.
+## 어떻게 확인하나
 
-- 권장 환경: VS Code Dev Container 또는 Ubuntu x86-64
-- 로컬 macOS `arm64`에서 바로 `make`를 실행하면 `-mno-sse` 옵션 때문에 실패할 수 있습니다.
-- 따라서 실제 빌드/테스트는 컨테이너 또는 x86-64 Linux 환경에서 진행하는 것을 권장합니다.
-
-예시:
+x86-64 Linux와 QEMU가 준비된 환경에서 다음 명령으로 VM 전체 테스트를 실행합니다.
 
 ```bash
-make -C pintos/threads
-make -C pintos/userprog
+make -C pintos/vm check
 ```
 
-## 작업 원칙
+이번 macOS ARM 환경에서는 빌드 중 `clang: error: unsupported option '-mno-sse' for target 'arm64-apple-darwin'`가 발생하여 테스트가 시작되지 않았습니다. 과제 제출 당시 기록은 `141/141`이지만 이번 재실행 결과가 아니며, 저장소에는 해당 결과의 원문 산출물이 포함되어 있지 않습니다.
 
-- 구현 변경은 가능하면 `dev`와 `woonyong`을 같은 기준점으로 유지합니다.
-- 미완성 코드라도 작업 추적이 필요하면 `CHANGELOG.md`와 관련 문서에 남깁니다.
-- 취소되거나 보류된 코드 조각은 삭제만 하지 않고 복구 가능한 형태로 남깁니다.
+## 한계
 
-## 변경로그 작성 규칙
-
-변경로그는 [CHANGELOG.md](CHANGELOG.md)에 아래 형식으로 누적합니다.
-
-```md
-[버전] - YYYY-MM-DD
-Added
-- 새 기능
-
-Changed
-- 동작 변경
-
-Fixed
-- 버그 수정
-```
-
-카테고리는 `Added`, `Changed`, `Fixed`, `Removed`, `Security`, `Docs`, `Refactored`를 기본으로 사용합니다.
-
-## 참고
-
-- Pintos 원문 안내: [pintos/README.md](pintos/README.md)
-- KAIST Pintos 문서: [https://casys-kaist.github.io/pintos-kaist/](https://casys-kaist.github.io/pintos-kaist/)
+- KAIST PintOS 위에서 수행한 교육 프로젝트이며 상용 OS 개발 경험이 아닙니다.
+- 빌드와 테스트는 x86-64 Linux 도구 체인을 전제로 합니다.
+- 다중 owner list 기반 프레임 회수 보완은 현재 작업 트리에만 있으며 이 README 커밋의 검증 대상에 포함하지 않습니다.
