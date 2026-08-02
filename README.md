@@ -1,5 +1,7 @@
 # SW_AI-W09 Pintos
 
+> 크래프톤 정글 12기 팀 프로젝트의 개인 보존용 미러다. 원본은 [Jungle-12-303/wk11_7](https://github.com/Jungle-12-303/wk11_7)이며, 개인 기여는 커밋 저자(`woonyong.kr@gmail.com`)와 파일별 `git blame`으로 확인할 수 있다.
+
 KAIST Pintos 기반으로 Project 1~4를 진행하는 팀 저장소입니다.  
 현재 저장소는 `Project 2: User Programs`의 `fork`, `exec`, `wait`, `exit`, 파일 디스크립터 흐름을 중심으로 작업 중입니다.
 
