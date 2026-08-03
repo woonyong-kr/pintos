@@ -13,9 +13,9 @@ permissions:
   contents: read
 
 jobs:
-  test:
+  threads:
     runs-on: ubuntu-22.04
-    timeout-minutes: 30
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
       - name: Install x86 emulator
@@ -27,6 +27,16 @@ jobs:
         run: |
           source pintos/activate
           make -C pintos/threads check
+
+  virtual-memory:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install x86 emulator
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes qemu-system-x86
       - name: Run virtual-memory tests
         shell: bash
         run: |

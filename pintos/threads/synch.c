@@ -207,7 +207,7 @@ lock_acquire (struct lock *lock) {
 	struct thread *curr = thread_current();
 
 	/* 나(curr)를 lock하는 holder 스레드가 존재한다면? */
-	if(lock->holder != NULL){
+	if(!thread_mlfqs && lock->holder != NULL){
 		struct thread *holder = lock->holder;
 		int idx = 0;
 		
@@ -276,6 +276,13 @@ void
 lock_release (struct lock *lock) {
 	ASSERT (lock != NULL);
 	ASSERT (lock_held_by_current_thread (lock));
+
+	/* MLFQS에서는 우선순위 기부를 사용하지 않는다. */
+	if (thread_mlfqs) {
+		lock->holder = NULL;
+		sema_up (&lock->semaphore);
+		return;
+	}
 
 	/* priority를 경우에 따른 하향을 하는 로직 구현 */
 	/* t = lock 잃는 스레드 */
