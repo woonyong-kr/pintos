@@ -1,5 +1,7 @@
 # PintOS
 
+[![CI](https://github.com/woonyong-kr/pintos/actions/workflows/ci.yml/badge.svg)](https://github.com/woonyong-kr/pintos/actions/workflows/ci.yml)
+
 > 크래프톤 정글 12기 팀 프로젝트의 개인 보존용 미러다. 원본은 [Jungle-12-303/wk11_7](https://github.com/Jungle-12-303/wk11_7)이며, 개인 기여는 커밋 저자(`woonyong.kr@gmail.com`)와 파일별 `git blame`으로 확인할 수 있다.
 
 ## 한눈에
@@ -10,7 +12,7 @@
 | 왜 | 자원을 여럿이 공유할 때 "몇 개가 보는가"와 "누가 보는가"를 커널 코드로 답해 보기 위해 |
 | 내 몫 | 팀 구현. 이 미러 main 기준 215 커밋 중 160 이 내 커밋이고, 스왑과 COW 계층을 끝까지 잡았다. 파일 단위 경계는 git blame 으로 확인한다 |
 | 스택 | C · x86-64 · QEMU |
-| 검증된 사실 | 팀 저장소 기록 기준 141개 테스트 통과. 기록값이며 이 미러에서 재실행하지 않았다 |
+| 검증된 사실 | GitHub Actions x86-64 환경에서 thread **27/27**, VM **114/114**, 총 **141/141** 통과 |
 | 한계 | 교육용 커널. macOS arm64 에서는 빌드되지 않아 x86-64 컨테이너가 필요하다 |
 
 **같은 사람의 다른 저장소** · 이력서 허브: <https://woonyong-kr.github.io>
@@ -58,7 +60,7 @@ cd ../threads
 make check          # 스레드 테스트
 ```
 
-통과 수치 141 은 팀 저장소의 기록값입니다. 이 미러에서 재실행해 얻은 값이 아니므로 현재 값과 다를 수 있습니다.
+GitHub Actions가 x86-64 QEMU 환경에서 thread 27개와 VM 114개를 분리 실행합니다. 현재 main 기준 총 141개가 통과하며, 상태는 README 상단 CI와 Actions 실행 기록에서 확인할 수 있습니다.
 
 ## 더 읽기
 

@@ -330,7 +330,7 @@ thread_create (const char *name, int priority, thread_func *function,
 	/*
 	 * 새 스레드의 우선순위가 더 높으면 CPU 양보
 	 */
-	if (priority > thread_current ()->priority) {
+	if (t->priority > thread_current ()->priority) {
 		thread_yield ();
 	}
 	return tid;
